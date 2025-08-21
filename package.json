@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:pr": "scripts/test-codex-pr.sh"
   },
   "dependencies": {
     "@emotion/is-prop-valid": "^1.2.1",
