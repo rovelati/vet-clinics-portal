@@ -58,7 +58,7 @@ const VetDetailPage = () => {
         // 2) Prezzi (service_id può essere NULL)
         const { data: prices, error: priceErr } = await supabase
           .from('services_prices')
-          .select('id, price, animal_type, service_id')
+          .select('id, price, animal_type, service_id, services_taxonomy(name)')
           .eq('clinic_id', clinicId)
           .order('id', { ascending: true });
         if (priceErr) throw priceErr;
@@ -102,7 +102,7 @@ const VetDetailPage = () => {
         const priceList = Array.isArray(prices)
           ? prices.map(p => ({
               id: p.id,
-              service: p.service_id ? (taxonomyMap.get(p.service_id)?.name || 'Servizio') : 'Servizio',
+              service: p.services_taxonomy?.name || 'Servizio',
               price: toMoney(p.price),
               animal_type: p.animal_type || '',
             }))
@@ -233,7 +233,10 @@ const VetDetailPage = () => {
                       <ul className="divide-y divide-gray-200">
                         {vetData.priceList.map(item => (
                           <li key={item.id} className="flex justify-between items-center py-3">
-                            <span className="text-gray-700">{item.service}</span>
+                            <span className="text-gray-700">
+                              {item.service}
+                              {item.animal_type ? ` (${item.animal_type.charAt(0).toUpperCase() + item.animal_type.slice(1)})` : ''}
+                            </span>
                             <span className="font-bold text-green-600">{item.price}</span>
                           </li>
                         ))}
@@ -242,7 +245,7 @@ const VetDetailPage = () => {
                   </Card>
                 )}
 
-                {vetData.ratingSummary && (
+                {(vetData.ratingSummary || (vetData.latestReviews && vetData.latestReviews.length > 0)) && (
                   <Card>
                     <CardHeader>
                       <CardTitle className="flex items-center justify-between">
@@ -251,17 +254,19 @@ const VetDetailPage = () => {
                       </CardTitle>
                     </CardHeader>
                     <CardContent>
-                      <div className="flex items-center mb-4">
-                        <div className="flex">{renderStars(vetData.ratingSummary.rating_avg_cached)}</div>
-                        <p className="ml-2 text-gray-600 font-semibold">
-                          {typeof vetData.ratingSummary.rating_avg_cached === 'number'
-                            ? `${vetData.ratingSummary.rating_avg_cached.toFixed(1)} su 5`
-                            : '—'}
-                          {typeof vetData.ratingSummary.rating_count_cached === 'number'
-                            ? ` (${vetData.ratingSummary.rating_count_cached} valutazioni)`
-                            : ''}
-                        </p>
-                      </div>
+                      {vetData.ratingSummary && (
+                        <div className="flex items-center mb-4">
+                          <div className="flex">{renderStars(vetData.ratingSummary.rating_avg_cached)}</div>
+                          <p className="ml-2 text-gray-600 font-semibold">
+                            {typeof vetData.ratingSummary.rating_avg_cached === 'number'
+                              ? `${vetData.ratingSummary.rating_avg_cached.toFixed(1)} su 5`
+                              : '—'}
+                            {typeof vetData.ratingSummary.rating_count_cached === 'number'
+                              ? ` (${vetData.ratingSummary.rating_count_cached} valutazioni)`
+                              : ''}
+                          </p>
+                        </div>
+                      )}
                       {vetData.latestReviews && vetData.latestReviews.length > 0 ? (
                         <div className="space-y-4">
                           {vetData.latestReviews.map((review) => (
