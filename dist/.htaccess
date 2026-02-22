@@ -1,0 +1,88 @@
+<IfModule mod_rewrite.c>
+  RewriteEngine On
+  RewriteBase /
+  
+  # SPA routing: tutte le route non esistenti vanno a index.html
+  RewriteCond %{REQUEST_FILENAME} !-f
+  RewriteCond %{REQUEST_FILENAME} !-d
+  RewriteRule ^ index.html [L]
+</IfModule>
+
+<IfModule mod_headers.c>
+  Header set X-Powered-By "Hostinger Horizons"
+
+  # ============================================
+  # File dinamici: NO CACHE (s-maxage=0)
+  # ============================================
+  # HTML files (SPA routes) - no cache su CDN
+  <FilesMatch "\.(html|htm)$">
+    Header set Cache-Control "public, s-maxage=0, max-age=0, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </FilesMatch>
+  
+  # API routes e file dinamici - no cache
+  <If "%{REQUEST_URI} =~ m#^/(api|_next|admin)/.*$#">
+    Header set Cache-Control "public, s-maxage=0, max-age=0, must-revalidate"
+    Header set Pragma "no-cache"
+    Header set Expires "0"
+  </If>
+  
+  # ============================================
+  # Asset statici: CACHE LUNGA (s-maxage alto)
+  # ============================================
+  # JavaScript e CSS (con versioning nel nome file)
+  <FilesMatch "\.(js|css)$">
+    Header set Cache-Control "public, s-maxage=31536000, max-age=31536000, immutable"
+  </FilesMatch>
+  
+  # Directory assets (JS/CSS versionati)
+  <If "%{REQUEST_URI} =~ m#^/assets/.*$#">
+    Header set Cache-Control "public, s-maxage=31536000, max-age=31536000, immutable"
+  </If>
+  
+  # Immagini (JPG, PNG, GIF, WebP, SVG, ICO)
+  <FilesMatch "\.(jpg|jpeg|png|gif|webp|svg|ico)$">
+    Header set Cache-Control "public, s-maxage=2592000, max-age=2592000"
+  </FilesMatch>
+  
+  # Font (WOFF, WOFF2, TTF, EOT, OTF)
+  <FilesMatch "\.(woff|woff2|ttf|eot|otf)$">
+    Header set Cache-Control "public, s-maxage=31536000, max-age=31536000, immutable"
+  </FilesMatch>
+  
+  # Altri file statici (JSON, XML, TXT, PDF)
+  <FilesMatch "\.(json|xml|txt|pdf)$">
+    Header set Cache-Control "public, s-maxage=86400, max-age=86400"
+  </FilesMatch>
+  
+  # Favicon - cache media
+  <FilesMatch "^(favicon\.ico|favicon\.svg|robots\.txt)$">
+    Header set Cache-Control "public, s-maxage=86400, max-age=86400"
+  </FilesMatch>
+</IfModule>
+
+# Compressione GZIP per file testuali
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/plain text/xml text/css text/javascript application/javascript application/json application/xml
+</IfModule>
+
+# MIME Types
+<IfModule mod_mime.c>
+  AddType application/javascript js
+  AddType text/css css
+  AddType image/svg+xml svg
+  AddType image/webp webp
+  AddType font/woff woff
+  AddType font/woff2 woff2
+</IfModule>
+
+# Basic Auth SOLO per /admin-test/ e tutte le sue sottocartelle
+<IfModule mod_auth_basic.c>
+  <If "%{REQUEST_URI} =~ m#^/admin-test#">
+    AuthType Basic
+    AuthName "Admin Area - Accesso Riservato"
+    AuthUserFile /home/u914016995/domains/baumicio.it/public_html/.htpasswd
+    Require valid-user
+  </If>
+</IfModule>

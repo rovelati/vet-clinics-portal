@@ -1,0 +1,559 @@
+<!doctype html>
+<html lang="it">
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+		<link rel="icon" type="image/x-icon" href="/favicon.ico" />
+		<link rel="shortcut icon" type="image/x-icon" href="/favicon.ico" />
+		<link rel="apple-touch-icon" href="/favicon.svg" />
+		<!-- Script CRITICO: aggiorna meta tag IMMEDIATAMENTE prima di qualsiasi altro elemento -->
+		<!-- Deve essere il PRIMO script per essere eseguito prima che i crawler leggano l'HTML -->
+		<script>
+		(function() {
+			'use strict';
+			// Funzione per aggiornare meta tag
+			function updateMetaTag(name, content, isProperty) {
+				if (!document.head) return;
+				const selector = isProperty ? `meta[property="${name}"]` : `meta[name="${name}"]`;
+				let meta = document.querySelector(selector);
+				if (!meta) {
+					meta = document.createElement('meta');
+					if (isProperty) {
+						meta.setAttribute('property', name);
+					} else {
+						meta.setAttribute('name', name);
+					}
+					document.head.appendChild(meta);
+				}
+				meta.setAttribute('content', content);
+			}
+			
+			function updateTitle(title) {
+				if (document.head) {
+					document.title = title;
+				}
+			}
+			
+			function updateCanonical(url) {
+				if (!document.head) return;
+				let link = document.querySelector('link[rel="canonical"]');
+				if (!link) {
+					link = document.createElement('link');
+					link.setAttribute('rel', 'canonical');
+					document.head.appendChild(link);
+				}
+				link.setAttribute('href', url);
+			}
+			
+			// Analizza la route corrente IMMEDIATAMENTE
+			const path = window.location.pathname;
+			const baseUrl = 'https://baumicio.it';
+			const fullUrl = baseUrl + path;
+			
+			// Pattern matching per identificare il tipo di pagina
+			if (path === '/' || path === '') {
+				// Homepage - usa i meta tag di default già presenti
+				return;
+			} else if (path.startsWith('/veterinari/') && path !== '/veterinari-h24') {
+				// Pagina dettaglio veterinario: /veterinari/:slug
+				const slug = path.replace('/veterinari/', '').replace(/\/$/, '');
+				const clinicName = slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+				updateTitle(`${clinicName} - Clinica Veterinaria | baumicio`);
+				updateMetaTag('description', `Informazioni complete su ${clinicName}. Orari, servizi, prezzi, recensioni e contatti. Trova la clinica veterinaria perfetta per il tuo animale.`, false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', `${clinicName} - Clinica Veterinaria | baumicio`, true);
+				updateMetaTag('og:description', `Informazioni complete su ${clinicName}. Orari, servizi, prezzi e recensioni.`, true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('og:type', 'business.business', true);
+				updateMetaTag('twitter:title', `${clinicName} - Clinica Veterinaria | baumicio`, false);
+				updateMetaTag('twitter:description', `Informazioni complete su ${clinicName}. Orari, servizi, prezzi e recensioni.`, false);
+			} else if (path.startsWith('/cerca-veterinari') || (path.match(/^\/[^\/]+\/veterinari$/) && !path.startsWith('/veterinari/'))) {
+				// Pagina ricerca veterinari: /cerca-veterinari o /:location/veterinari (es. /bari-ba/veterinari, /bergamo-bg/veterinari)
+				let cityName = '';
+				let province = '';
+				let locationText = '';
+				
+				if (path.match(/^\/[^\/]+\/veterinari$/)) {
+					// Formato nuovo: /city-province/veterinari o /city/veterinari
+					const locationPart = path.split('/veterinari')[0].replace(/^\//, '');
+					
+					// Prova a estrarre provincia (ultime 2 lettere dopo l'ultimo trattino)
+					const parts = locationPart.split('-');
+					if (parts.length >= 2) {
+						const lastPart = parts[parts.length - 1];
+						// Se l'ultima parte è di 2 lettere, probabilmente è la provincia
+						if (lastPart.length === 2 && /^[a-z]{2}$/i.test(lastPart)) {
+							province = lastPart.toUpperCase();
+							cityName = parts.slice(0, -1).join(' ').replace(/\b\w/g, l => l.toUpperCase());
+						} else {
+							cityName = locationPart.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+						}
+					} else {
+						cityName = locationPart.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+					}
+					
+					locationText = cityName + (province ? `, ${province}` : '');
+				} else if (path.startsWith('/cerca-veterinari')) {
+					// Formato legacy: /cerca-veterinari o /cerca-veterinari/:city
+					const cityPart = path.replace('/cerca-veterinari', '').replace(/^\//, '').replace(/-/g, ' ');
+					if (cityPart) {
+						cityName = cityPart.replace(/\b\w/g, l => l.toUpperCase());
+						locationText = cityName;
+					}
+				}
+				
+				const locationDisplay = locationText ? ` a ${locationText}` : '';
+				updateTitle(`Veterinari${locationDisplay} - Trova la Clinica Perfetta | baumicio`);
+				updateMetaTag('description', `Cerca e trova veterinari${locationText ? ` a ${locationText.toLowerCase()}` : ''} per i tuoi animali domestici. Leggi recensioni, confronta prezzi e trova la clinica più vicina.`, false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', `Veterinari${locationDisplay} - Trova la Clinica Perfetta | baumicio`, true);
+				updateMetaTag('og:description', `Cerca e trova veterinari${locationText ? ` a ${locationText.toLowerCase()}` : ''} per i tuoi animali domestici.`, true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', `Veterinari${locationDisplay} - Trova la Clinica Perfetta | baumicio`, false);
+				updateMetaTag('twitter:description', `Cerca e trova veterinari${locationText ? ` a ${locationText.toLowerCase()}` : ''} per i tuoi animali domestici.`, false);
+			} else if (path.startsWith('/veterinari-h24/')) {
+				// Pagina veterinari H24 con località: /veterinari-h24/:location
+				const locationSlug = path.replace('/veterinari-h24/', '').replace(/\/$/, '');
+				// Parsa lo slug della località (es. "bari", "sesto-calende-va")
+				let cityName = '';
+				let province = '';
+				
+				const parts = locationSlug.split('-');
+				if (parts.length >= 2) {
+					const lastPart = parts[parts.length - 1];
+					// Se l'ultima parte è di 2 lettere, probabilmente è la provincia
+					if (lastPart.length === 2 && /^[a-z]{2}$/i.test(lastPart)) {
+						province = lastPart.toUpperCase();
+						cityName = parts.slice(0, -1).join(' ').replace(/\b\w/g, l => l.toUpperCase());
+					} else {
+						cityName = locationSlug.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+					}
+				} else {
+					cityName = locationSlug.replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+				}
+				
+				const locationText = cityName + (province ? `, ${province}` : '');
+				const title = `Veterinari H24 aperti adesso a ${locationText} - Baumicio`;
+				const description = `Trova veterinari H24 aperti adesso a ${locationText}. Cliniche veterinarie aperte 24 ore su 24 con mappa interattiva, recensioni verificate e servizi di emergenza.`;
+				
+				updateTitle(title);
+				updateMetaTag('description', description, false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', title, true);
+				updateMetaTag('og:description', description, true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('og:type', 'website', true);
+				updateMetaTag('twitter:title', title, false);
+				updateMetaTag('twitter:description', description, false);
+			} else if (path === '/veterinari-h24') {
+				// Pagina veterinari H24 base
+				updateTitle('Veterinari H24 - Cliniche Aperte 24 Ore | baumicio');
+				updateMetaTag('description', 'Trova veterinari aperti 24 ore su 24 per emergenze veterinarie. Cliniche disponibili h24 per il tuo animale domestico.', false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', 'Veterinari H24 - Cliniche Aperte 24 Ore | baumicio', true);
+				updateMetaTag('og:description', 'Trova veterinari aperti 24 ore su 24 per emergenze veterinarie.', true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', 'Veterinari H24 - Cliniche Aperte 24 Ore | baumicio', false);
+				updateMetaTag('twitter:description', 'Trova veterinari aperti 24 ore su 24 per emergenze veterinarie.', false);
+			} else if (path === '/quanto-costa') {
+				// Pagina principale "Quanto Costa"
+				updateTitle('Quanto Costa? - Prezzi Servizi Veterinari | baumicio');
+				updateMetaTag('description', 'Scopri i prezzi dei servizi veterinari in Italia. Confronta i costi di visite, vaccinazioni, interventi e molto altro.', false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', 'Quanto Costa? - Prezzi Servizi Veterinari | baumicio', true);
+				updateMetaTag('og:description', 'Scopri i prezzi dei servizi veterinari in Italia. Confronta i costi.', true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', 'Quanto Costa? - Prezzi Servizi Veterinari | baumicio', false);
+				updateMetaTag('twitter:description', 'Scopri i prezzi dei servizi veterinari in Italia.', false);
+			} else if (path.startsWith('/quanto-costa/') && path.includes('/cliniche')) {
+				// Pagina listing cliniche per servizio: /quanto-costa/:prestazione/cliniche
+				const parts = path.split('/').filter(p => p);
+				const serviceSlug = parts[1] || '';
+				const location = parts[2] || '';
+				const serviceName = serviceSlug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+				const locationText = location ? ` a ${location.replace(/-/g, ' ')}` : '';
+				updateTitle(`${serviceName}${locationText} - Trova Cliniche Disponibili | baumicio`);
+				updateMetaTag('description', `Trova cliniche veterinarie che offrono ${serviceName}${locationText}. Confronta prezzi e richiedi preventivi personalizzati.`, false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', `${serviceName}${locationText} - Trova Cliniche Disponibili | baumicio`, true);
+				updateMetaTag('og:description', `Trova cliniche veterinarie che offrono ${serviceName}${locationText}.`, true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', `${serviceName}${locationText} - Trova Cliniche Disponibili | baumicio`, false);
+				updateMetaTag('twitter:description', `Trova cliniche veterinarie che offrono ${serviceName}${locationText}.`, false);
+			} else if (path.startsWith('/quanto-costa/') && !path.includes('/cliniche')) {
+				// Pagina descrizione servizio: /quanto-costa/:serviceSlug
+				const serviceSlug = path.replace('/quanto-costa/', '').replace(/\/$/, '');
+				const serviceName = serviceSlug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+				updateTitle(`${serviceName} - Prezzi e Informazioni | baumicio`);
+				updateMetaTag('description', `Scopri tutto su ${serviceName}: prezzi, informazioni, quando è necessario e come trovare la clinica giusta.`, false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', `${serviceName} - Prezzi e Informazioni | baumicio`, true);
+				updateMetaTag('og:description', `Scopri tutto su ${serviceName}: prezzi, informazioni e quando è necessario.`, true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('og:type', 'article', true);
+				updateMetaTag('twitter:title', `${serviceName} - Prezzi e Informazioni | baumicio`, false);
+				updateMetaTag('twitter:description', `Scopri tutto su ${serviceName}: prezzi e informazioni.`, false);
+			} else if (path === '/integratori') {
+				// Pagina listing integratori
+				updateTitle('Integratori per Animali - Prodotti Veterinari Online | baumicio');
+				updateMetaTag('description', 'Acquista i migliori integratori per cani e gatti su Amazon. Prodotti per articolazioni, digestione, pelo e pelle con il nostro codice affiliato.', false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', 'Integratori per Animali - Prodotti Veterinari Online | baumicio', true);
+				updateMetaTag('og:description', 'Scopri la nostra selezione di integratori per animali domestici, disponibili su Amazon.', true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', 'Integratori per Animali - Prodotti Veterinari Online | baumicio', false);
+				updateMetaTag('twitter:description', 'Scopri la nostra selezione di integratori per animali domestici.', false);
+			} else if (path.startsWith('/integratori/')) {
+				// Pagina dettaglio integratore: /integratori/:slug
+				const slug = path.replace('/integratori/', '').replace(/\/$/, '');
+				const productName = slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+				updateTitle(`${productName} - Integratore per Animali | baumicio`);
+				updateMetaTag('description', `Scopri ${productName}: benefici, modalità d'uso, recensioni e dove acquistarlo. La guida completa per il benessere del tuo animale.`, false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', `${productName} - Integratore per Animali | baumicio`, true);
+				updateMetaTag('og:description', `Scopri ${productName}: benefici, modalità d'uso e recensioni.`, true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('og:type', 'product', true);
+				updateMetaTag('twitter:title', `${productName} - Integratore per Animali | baumicio`, false);
+				updateMetaTag('twitter:description', `Scopri ${productName}: benefici e modalità d'uso.`, false);
+			} else if (path === '/blog') {
+				// Pagina listing blog
+				updateTitle('Blog Veterinario - Consigli e Guide per Animali | baumicio');
+				updateMetaTag('description', 'Leggi articoli e guide sulla cura degli animali domestici. Consigli di veterinari esperti su salute, alimentazione e benessere.', false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', 'Blog Veterinario - Consigli e Guide per Animali | baumicio', true);
+				updateMetaTag('og:description', 'Leggi articoli e guide sulla cura degli animali domestici.', true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', 'Blog Veterinario - Consigli e Guide per Animali | baumicio', false);
+				updateMetaTag('twitter:description', 'Leggi articoli e guide sulla cura degli animali domestici.', false);
+			} else if (path.startsWith('/blog/')) {
+				// Pagina dettaglio blog post: /blog/:slug
+				const slug = path.replace('/blog/', '').replace(/\/$/, '');
+				const postTitle = slug.split('-').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+				updateTitle(`${postTitle} - Blog baumicio`);
+				updateMetaTag('description', `Leggi l'articolo completo: ${postTitle}. Consigli e informazioni utili per la cura dei tuoi animali domestici.`, false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', `${postTitle} - Blog baumicio`, true);
+				updateMetaTag('og:description', `Leggi l'articolo completo: ${postTitle}.`, true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('og:type', 'article', true);
+				updateMetaTag('twitter:title', `${postTitle} - Blog baumicio`, false);
+				updateMetaTag('twitter:description', `Leggi l'articolo completo: ${postTitle}.`, false);
+			} else if (path === '/servizi') {
+				// Pagina servizi
+				updateTitle('Servizi Veterinari - Cosa Offrono le Cliniche | baumicio');
+				updateMetaTag('description', 'Scopri tutti i servizi veterinari disponibili: visite, chirurgia, esami diagnostici, vaccinazioni e molto altro.', false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', 'Servizi Veterinari - Cosa Offrono le Cliniche | baumicio', true);
+				updateMetaTag('og:description', 'Scopri tutti i servizi veterinari disponibili per i tuoi animali.', true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', 'Servizi Veterinari - Cosa Offrono le Cliniche | baumicio', false);
+				updateMetaTag('twitter:description', 'Scopri tutti i servizi veterinari disponibili.', false);
+			} else if (path === '/note-legali') {
+				// Pagina note legali
+				updateTitle('Note Legali - baumicio');
+				updateMetaTag('description', 'Note legali e condizioni d\'uso di baumicio.it. Privacy policy e informazioni sulla gestione dei dati.', false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', 'Note Legali - baumicio', true);
+				updateMetaTag('og:description', 'Note legali e condizioni d\'uso di baumicio.it.', true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', 'Note Legali - baumicio', false);
+				updateMetaTag('twitter:description', 'Note legali e condizioni d\'uso di baumicio.it.', false);
+			} else if (path === '/vantaggi-veterinari') {
+				// Pagina vantaggi veterinari
+				updateTitle('Vantaggi per Veterinari - baumicio');
+				updateMetaTag('description', 'Scopri i vantaggi di registrare il tuo studio veterinario su baumicio: gestione pagina, visibilità, orari, foto, preventivi e comunicazione clienti.', false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', 'Vantaggi per Veterinari - baumicio', true);
+				updateMetaTag('og:description', 'Scopri i vantaggi di registrare il tuo studio veterinario su baumicio.', true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', 'Vantaggi per Veterinari - baumicio', false);
+				updateMetaTag('twitter:description', 'Scopri i vantaggi di registrare il tuo studio veterinario su baumicio.', false);
+			} else if (path === '/login' || path === '/register') {
+				// Pagine autenticazione (noindex)
+				const pageType = path === '/login' ? 'Login' : 'Registrazione';
+				updateTitle(`${pageType} - baumicio`);
+				updateMetaTag('description', `${pageType} su baumicio.it per accedere alla tua area riservata o registrare il tuo studio veterinario.`, false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'noindex, nofollow', false);
+				updateMetaTag('og:title', `${pageType} - baumicio`, true);
+				updateMetaTag('og:description', `${pageType} su baumicio.it.`, true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', `${pageType} - baumicio`, false);
+				updateMetaTag('twitter:description', `${pageType} su baumicio.it.`, false);
+			} else if (path === '/claim' || path === '/claim/start' || path === '/dashboard/veterinario' || path === '/adminconsole' || path === '/auth/callback' || path.startsWith('/preventivi/')) {
+				// Pagine private / funnel (noindex)
+				updateTitle('Area Riservata - baumicio');
+				updateMetaTag('description', 'Area riservata baumicio.', false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'noindex, nofollow', false);
+				updateMetaTag('og:title', 'Area Riservata - baumicio', true);
+				updateMetaTag('og:description', 'Area riservata baumicio.', true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', 'Area Riservata - baumicio', false);
+				updateMetaTag('twitter:description', 'Area riservata baumicio.', false);
+			} else {
+				// Fallback generico per altre pagine
+				const pageName = path.split('/').filter(p => p).map(p => p.charAt(0).toUpperCase() + p.slice(1).replace(/-/g, ' ')).join(' - ') || 'baumicio';
+				updateTitle(`${pageName} | baumicio`);
+				updateMetaTag('description', 'BauMicio - La piattaforma più completa d\'Italia per trovare veterinari qualificati, leggere recensioni e prenotare visite per i tuoi animali domestici.', false);
+				updateCanonical(fullUrl);
+				updateMetaTag('robots', 'index, follow', false);
+				updateMetaTag('og:title', `${pageName} | baumicio`, true);
+				updateMetaTag('og:description', 'BauMicio - Trova veterinari qualificati per i tuoi animali domestici.', true);
+				updateMetaTag('og:url', fullUrl, true);
+				updateMetaTag('twitter:title', `${pageName} | baumicio`, false);
+				updateMetaTag('twitter:description', 'BauMicio - Trova veterinari qualificati per i tuoi animali domestici.', false);
+			}
+			
+			// Assicura che meta robots sia sempre presente
+			if (!document.querySelector('meta[name="robots"]')) {
+				updateMetaTag('robots', 'index, follow', false);
+			}
+		})();
+		</script>
+		
+		<!-- SEO Meta Tags Base (presenti prima dell'idratazione React) -->
+		<title>baumicio - Trova il Veterinario Perfetto per il Tuo Animale</title>
+		<meta name="description" content="BauMicio - Cerca e trova il miglior veterinario a Milano, Roma e in tutta Italia per i tuoi animali domestici. Leggi recensioni e prenota subito." />
+		<meta name="keywords" content="veterinari, cliniche veterinarie, veterinari h24, veterinari milano, veterinari roma, veterinari bologna" />
+		<link rel="canonical" href="https://baumicio.it" />
+		<meta name="robots" content="index, follow" />
+		
+		<!-- Open Graph Base -->
+		<meta property="og:title" content="baumicio - Trova il Veterinario Perfetto per il Tuo Animale" />
+		<meta property="og:description" content="BauMicio - La guida completa per trovare veterinari aperti 24 ore su 24 e cliniche specializzate per i tuoi animali domestici." />
+		<meta property="og:url" content="https://baumicio.it" />
+		<meta property="og:type" content="website" />
+		<meta property="og:site_name" content="baumicio" />
+		<meta property="og:image" content="https://images.unsplash.com/photo-1583337130417-3346a1be7dee" />
+		
+		<!-- Twitter Card Base -->
+		<meta name="twitter:card" content="summary_large_image" />
+		<meta name="twitter:title" content="baumicio - Trova il Veterinario Perfetto per il Tuo Animale" />
+		<meta name="twitter:description" content="BauMicio - La guida completa per trovare veterinari aperti 24 ore su 24 e cliniche specializzate per i tuoi animali domestici." />
+		<meta name="twitter:image" content="https://images.unsplash.com/photo-1583337130417-3346a1be7dee" />
+		
+		<!-- Google Tag Manager -->
+		<script>(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start':
+		new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0],
+		j=d.createElement(s),dl=l!='dataLayer'?'&l='+l:'';j.async=true;j.src=
+		'https://www.googletagmanager.com/gtm.js?id='+i+dl;f.parentNode.insertBefore(j,f);
+		})(window,document,'script','dataLayer','GTM-TWQN26V5');</script>
+		<!-- End Google Tag Manager -->
+		
+		<!-- Structured Data JSON-LD Base (presenti prima dell'idratazione React) -->
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "Organization",
+			"@id": "https://baumicio.it#organization",
+			"name": "baumicio",
+			"alternateName": "BauMicio",
+			"url": "https://baumicio.it",
+			"logo": "https://images.unsplash.com/photo-1583337130417-3346a1be7dee",
+			"description": "La piattaforma più completa d'Italia per trovare veterinari qualificati, leggere recensioni e prenotare visite per i tuoi animali domestici",
+			"contactPoint": {
+				"@type": "ContactPoint",
+				"email": "info@baumicio.it",
+				"contactType": "customer service",
+				"areaServed": "IT",
+				"availableLanguage": "Italian"
+			}
+		}
+		</script>
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "WebSite",
+			"@id": "https://baumicio.it#website",
+			"name": "baumicio",
+			"url": "https://baumicio.it",
+			"potentialAction": {
+				"@type": "SearchAction",
+				"target": "https://baumicio.it/cerca-veterinari?query={search_term_string}",
+				"query-input": "required name=search_term_string"
+			}
+		}
+		</script>
+		<script type="application/ld+json">
+		{
+			"@context": "https://schema.org",
+			"@type": "BreadcrumbList",
+			"itemListElement": [
+				{
+					"@type": "ListItem",
+					"position": 1,
+					"name": "Home",
+					"item": "https://baumicio.it"
+				}
+			]
+		}
+		</script>
+		
+		<!-- UniConsent CMP - Consent Management Platform -->
+		<script src="https://cmp.uniconsent.com/v2/stub.min.js"></script>
+		<script src="https://cmp.uniconsent.com/v2/stubgcm.min.js"></script>
+		<script async src='https://cmp.uniconsent.com/v2/8d3a66a937/cmp.js'></script>
+		
+		<!-- Google AdSense -->
+		<script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2168172914069272"
+		     crossorigin="anonymous"></script>
+		
+		<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+   integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+   crossorigin=""/>
+		<script type="module" crossorigin src="/assets/index-e503c897.js"></script>
+		<link rel="stylesheet" href="/assets/index-97d04f6d.css">
+		<script type="module">
+window.onerror = (message, source, lineno, colno, errorObj) => {
+	const errorDetails = errorObj ? JSON.stringify({
+		name: errorObj.name,
+		message: errorObj.message,
+		stack: errorObj.stack,
+		source,
+		lineno,
+		colno,
+	}) : null;
+
+	window.parent.postMessage({
+		type: 'horizons-runtime-error',
+		message,
+		error: errorDetails
+	}, '*');
+};
+</script>
+		<script type="module">
+const observer = new MutationObserver((mutations) => {
+	for (const mutation of mutations) {
+		for (const addedNode of mutation.addedNodes) {
+			if (
+				addedNode.nodeType === Node.ELEMENT_NODE &&
+				(
+					addedNode.tagName?.toLowerCase() === 'vite-error-overlay' ||
+					addedNode.classList?.contains('backdrop')
+				)
+			) {
+				handleViteOverlay(addedNode);
+			}
+		}
+	}
+});
+
+observer.observe(document.documentElement, {
+	childList: true,
+	subtree: true
+});
+
+function handleViteOverlay(node) {
+	if (!node.shadowRoot) {
+		return;
+	}
+
+	const backdrop = node.shadowRoot.querySelector('.backdrop');
+
+	if (backdrop) {
+		const overlayHtml = backdrop.outerHTML;
+		const parser = new DOMParser();
+		const doc = parser.parseFromString(overlayHtml, 'text/html');
+		const messageBodyElement = doc.querySelector('.message-body');
+		const fileElement = doc.querySelector('.file');
+		const messageText = messageBodyElement ? messageBodyElement.textContent.trim() : '';
+		const fileText = fileElement ? fileElement.textContent.trim() : '';
+		const error = messageText + (fileText ? ' File:' + fileText : '');
+
+		window.parent.postMessage({
+			type: 'horizons-vite-error',
+			error,
+		}, '*');
+	}
+}
+</script>
+		<script type="module">
+const originalConsoleError = console.error;
+console.error = function(...args) {
+	originalConsoleError.apply(console, args);
+
+	let errorString = '';
+
+	for (let i = 0; i < args.length; i++) {
+		const arg = args[i];
+		if (arg instanceof Error) {
+			errorString = arg.stack || `${arg.name}: ${arg.message}`;
+			break;
+		}
+	}
+
+	if (!errorString) {
+		errorString = args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : String(arg)).join(' ');
+	}
+
+	window.parent.postMessage({
+		type: 'horizons-console-error',
+		error: errorString
+	}, '*');
+};
+</script>
+		<script type="module">
+const originalFetch = window.fetch;
+
+window.fetch = function(...args) {
+	const url = args[0] instanceof Request ? args[0].url : args[0];
+
+	// Skip WebSocket URLs
+	if (url.startsWith('ws:') || url.startsWith('wss:')) {
+		return originalFetch.apply(this, args);
+	}
+
+	return originalFetch.apply(this, args)
+		.then(async response => {
+			const contentType = response.headers.get('Content-Type') || '';
+
+			// Exclude HTML document responses
+			const isDocumentResponse =
+				contentType.includes('text/html') ||
+				contentType.includes('application/xhtml+xml');
+
+			if (!response.ok && !isDocumentResponse) {
+					const responseClone = response.clone();
+					const errorFromRes = await responseClone.text();
+					const requestUrl = response.url;
+					console.error(`Fetch error from ${requestUrl}: ${errorFromRes}`);
+			}
+
+			return response;
+		})
+		.catch(error => {
+			if (!url.match(/.html?$/i)) {
+				console.error(error);
+			}
+
+			throw error;
+		});
+};
+</script>
+	</head>
+	<body>
+		<!-- Google Tag Manager (noscript) -->
+		<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=GTM-TWQN26V5"
+		height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>
+		<!-- End Google Tag Manager (noscript) -->
+		<div id="root"></div>
+		
+	</body>
+</html>
