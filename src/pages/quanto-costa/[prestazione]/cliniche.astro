@@ -1,0 +1,11 @@
+---
+import ClinicheByServicePage from '@/components/ClinicheByServicePage.astro';
+
+const serviceSlug = Astro.params.prestazione || '';
+const requestedPage = Number(Astro.url.searchParams.get('page') || '1');
+if (Number.isInteger(requestedPage) && requestedPage > 1) {
+  Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+}
+---
+
+<ClinicheByServicePage serviceSlug={serviceSlug} />

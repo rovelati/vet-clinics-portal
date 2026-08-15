@@ -1,0 +1,36 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+
+const title = `Chi Siamo | ${siteConfig.name}`;
+const description = `${siteConfig.name} aiuta proprietari di animali a trovare veterinari, cliniche, servizi H24 e informazioni sui costi delle prestazioni veterinarie.`;
+---
+
+<BaseLayout title={title} description={description} canonical={`${siteConfig.url}/chi-siamo`}>
+  <main class="bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+    <article class="mx-auto max-w-4xl rounded-lg bg-white p-8 shadow-sm md:p-12">
+      <h1 class="text-3xl font-bold text-gray-900">Chi Siamo</h1>
+      <div class="mt-6 space-y-6 text-gray-700">
+        <p class="text-lg">
+          <strong>{siteConfig.name}</strong> e un portale indipendente dedicato alla ricerca e al confronto di cliniche veterinarie e servizi per la salute degli animali domestici in Italia.
+        </p>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">La nostra missione</h2>
+          <p class="mt-2">Rendere piu semplice trovare la struttura giusta nel momento del bisogno, con dati organizzati su indirizzi, orari, recensioni, servizi, disponibilita H24 e prezzi indicativi.</p>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Come lavoriamo</h2>
+          <p class="mt-2">Raccogliamo e normalizziamo dati pubblici, creando percorsi di ricerca locali e schede che i titolari possono reclamare per aggiornare informazioni e prestazioni offerte.</p>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Perche usarci</h2>
+          <ul class="mt-2 list-disc space-y-2 pl-5">
+            <li>Ricerca gratuita per gli utenti.</li>
+            <li>Risultati locali con mappa, contatti e recensioni disponibili.</li>
+            <li>Percorsi dedicati a emergenze H24 e informazioni sui costi veterinari.</li>
+          </ul>
+        </section>
+      </div>
+    </article>
+  </main>
+</BaseLayout>

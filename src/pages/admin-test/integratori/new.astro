@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import AdminIntegratoriApp from '@/components/react/AdminIntegratoriApp.jsx';
+import { siteConfig } from '@/config/site';
+---
+
+<BaseLayout
+  title={`Nuovo Integratore | ${siteConfig.name}`}
+  description="Creazione articolo integratore."
+  canonical={`${siteConfig.url}/admin-test/integratori/new`}
+  noindex={true}
+>
+  <AdminIntegratoriApp mode="editor" articleId="new" client:load />
+</BaseLayout>

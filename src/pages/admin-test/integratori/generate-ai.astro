@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import AdminIntegratoriApp from '@/components/react/AdminIntegratoriApp.jsx';
+import { siteConfig } from '@/config/site';
+---
+
+<BaseLayout
+  title={`Genera Integratore AI | ${siteConfig.name}`}
+  description="Generazione AI articoli integratori."
+  canonical={`${siteConfig.url}/admin-test/integratori/generate-ai`}
+  noindex={true}
+>
+  <AdminIntegratoriApp mode="ai" client:load />
+</BaseLayout>

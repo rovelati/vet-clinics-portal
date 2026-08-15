@@ -1,0 +1,34 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+
+const title = `Cookie Policy | ${siteConfig.name}`;
+const description = `Informativa sui cookie usati da ${siteConfig.name} per funzionalita tecniche, statistiche e preferenze di consenso.`;
+---
+
+<BaseLayout title={title} description={description} canonical={`${siteConfig.url}/cookie-policy`}>
+  <main class="bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+    <article class="mx-auto max-w-4xl rounded-lg bg-white p-8 shadow-sm md:p-12">
+      <h1 class="text-3xl font-bold text-gray-900">Cookie Policy</h1>
+      <p class="mt-4 text-sm text-gray-500">Ultimo aggiornamento: 14 giugno 2026</p>
+      <div class="mt-8 space-y-6 text-gray-700">
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Cosa sono i cookie</h2>
+          <p class="mt-2">I cookie sono piccoli file salvati dal browser per far funzionare il sito, ricordare preferenze e migliorare l'esperienza di navigazione.</p>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Tipologie utilizzate</h2>
+          <ul class="mt-2 list-disc space-y-2 pl-5">
+            <li><strong>Cookie tecnici:</strong> necessari per navigazione, sicurezza e sessioni utente.</li>
+            <li><strong>Cookie analitici:</strong> usati, se attivati, per comprendere l'utilizzo del sito in forma aggregata.</li>
+            <li><strong>Cookie pubblicitari:</strong> usati solo se configurati e previo consenso ove richiesto.</li>
+          </ul>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Gestione del consenso</h2>
+          <p class="mt-2">Puoi modificare le preferenze dal link “Impostazioni Consenso” presente nel footer, quando la piattaforma CMP e attiva.</p>
+        </section>
+      </div>
+    </article>
+  </main>
+</BaseLayout>

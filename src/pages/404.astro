@@ -1,0 +1,47 @@
+---
+import { Home, PawPrint, Search } from 'lucide-react';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+
+Astro.response.status = 404;
+
+const title = `Pagina non trovata | ${siteConfig.name}`;
+const description = 'La pagina che stavi cercando non e disponibile. Tra pochi secondi verrai riportato alla home di Veterinari.org.';
+---
+
+<BaseLayout title={title} description={description} noindex>
+  <section class="relative overflow-hidden bg-white">
+    <script is:inline>
+      window.setTimeout(function () {
+        window.location.href = '/';
+      }, 3000);
+    </script>
+    <div class="mx-auto grid min-h-[70vh] max-w-7xl place-items-center px-4 py-16 sm:px-6 lg:px-8">
+      <div class="w-full max-w-2xl text-center">
+        <div class="mx-auto flex h-20 w-20 items-center justify-center rounded-full bg-emerald-50 text-emerald-600 ring-8 ring-emerald-100">
+          <PawPrint className="h-10 w-10" aria-hidden="true" />
+        </div>
+
+        <p class="mt-8 text-sm font-bold uppercase tracking-wide text-emerald-700">Errore 404</p>
+        <h1 class="mt-3 text-4xl font-bold tracking-tight text-slate-950 sm:text-5xl">
+          Questa pagina non e piu disponibile
+        </h1>
+        <p class="mx-auto mt-5 max-w-xl text-lg leading-8 text-slate-600">
+          La scheda o il contenuto che cercavi potrebbe essere stato aggiornato, unito a un'altra scheda o rimosso.
+          Ti riportiamo alla home tra 3 secondi.
+        </p>
+
+        <div class="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+          <a href="/" class="inline-flex items-center justify-center gap-2 rounded-md bg-emerald-600 px-5 py-3 text-base font-bold text-white shadow-sm hover:bg-emerald-700">
+            <Home className="h-5 w-5" aria-hidden="true" />
+            Vai alla home
+          </a>
+          <a href="/cerca-veterinari" class="inline-flex items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-5 py-3 text-base font-bold text-slate-800 hover:bg-slate-50">
+            <Search className="h-5 w-5" aria-hidden="true" />
+            Cerca un veterinario
+          </a>
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

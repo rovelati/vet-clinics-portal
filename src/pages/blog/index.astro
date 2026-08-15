@@ -1,0 +1,173 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+import { query } from '@/lib/local-db';
+
+const title = `Blog Veterinario | Articoli scritti dai professionisti | ${siteConfig.name}`;
+const description = 'Il blog di Veterinari.org raccoglie articoli informativi scritti dai veterinari che hanno reclamato la propria struttura, con pubblicazione dopo verifica editoriale.';
+
+const workflow = [
+  {
+    step: '1',
+    title: 'Registrazione e claim',
+    text: 'Il veterinario crea un account e reclama una struttura gia presente sul portale. Ogni account puo gestire una sola inserzione.',
+  },
+  {
+    step: '2',
+    title: 'Scheda verificata',
+    text: 'La richiesta di presa in carico viene controllata dall admin. Solo dopo la verifica il professionista puo aggiornare la scheda e proporre contenuti.',
+  },
+  {
+    step: '3',
+    title: 'Editor articoli',
+    text: 'Dalla dashboard il veterinario prepara un articolo utile per i proprietari: testo, immagini, riferimenti alla propria esperienza e collegamento alla scheda della struttura.',
+  },
+  {
+    step: '4',
+    title: 'Revisione manuale',
+    text: 'Prima della pubblicazione l articolo resta in attesa. L admin verifica chiarezza, tono informativo, correttezza editoriale e assenza di contenuti promozionali eccessivi.',
+  },
+  {
+    step: '5',
+    title: 'Pubblicazione',
+    text: 'Quando approvato, l articolo entra nel blog e puo portare visibilita qualificata alla struttura, mantenendo al centro l utilita per chi cerca informazioni.',
+  },
+];
+
+const benefits = [
+  {
+    title: 'Per chi cerca informazioni',
+    text: 'Guide leggibili, firmate da professionisti reali, con indicazioni pratiche su prevenzione, sintomi, esami, costi indicativi e quando contattare una clinica.',
+  },
+  {
+    title: 'Per i veterinari',
+    text: 'Uno spazio autorevole per farsi conoscere, spiegare le proprie competenze e portare traffico verso la scheda della struttura senza trasformare il blog in pubblicita pura.',
+  },
+];
+
+let publishedArticles: any[] = [];
+try {
+  const result = await query<any>(
+    `select a.title, a.slug, a.excerpt, a.image_url, a.published_at,
+            c.name as clinic_name, c.slug as clinic_slug
+       from public.veterinary_blog_articles a
+       join public.clinics c on c.id = a.clinic_id
+      where a.status = 'published' and a.slug is not null
+      order by a.published_at desc nulls last
+      limit 24`
+  );
+  publishedArticles = result.rows;
+} catch {
+  publishedArticles = [];
+}
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  canonical={`${siteConfig.url}/blog`}
+>
+  <main class="bg-gray-50">
+    <section class="bg-white">
+      <div class="mx-auto max-w-7xl px-4 py-12 sm:px-6 sm:py-16 lg:px-8">
+        <div class="max-w-4xl">
+          <p class="text-sm font-bold uppercase tracking-wide text-green-700">Blog Veterinario</p>
+          <h1 class="mt-3 text-4xl font-bold tracking-tight text-gray-950 sm:text-5xl">
+            Articoli utili scritti dai veterinari
+          </h1>
+          <p class="mt-5 max-w-3xl text-lg leading-8 text-gray-600">
+            Questa sezione nasce per aiutare i proprietari di animali a capire meglio salute, prevenzione, esami e prestazioni veterinarie. Gli articoli sono proposti da veterinari registrati con una struttura verificata e vengono pubblicati solo dopo il controllo manuale della redazione.
+          </p>
+          <div class="mt-8 flex flex-col gap-3 sm:flex-row">
+            <a href="/claim" class="inline-flex items-center justify-center rounded-md bg-green-700 px-5 py-3 text-sm font-semibold text-white hover:bg-green-800">
+              Reclama la tua struttura
+            </a>
+            <a href="/register?type=veterinario&claim=true" rel="nofollow" class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-800 hover:bg-gray-50">
+              Registrati come veterinario
+            </a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    {publishedArticles.length > 0 && (
+      <section class="border-y border-gray-200 bg-white">
+        <div class="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+          <div class="max-w-3xl">
+            <p class="text-sm font-bold uppercase tracking-wide text-green-700">Ultimi articoli</p>
+            <h2 class="mt-2 text-3xl font-bold text-gray-950">Approfondimenti verificati dalla redazione</h2>
+          </div>
+          <div class="mt-8 grid gap-5 md:grid-cols-2 lg:grid-cols-3">
+            {publishedArticles.map((article) => (
+              <article class="overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
+                {article.image_url && <img src={article.image_url} alt="" class="h-48 w-full object-cover" loading="lazy" />}
+                <div class="p-5">
+                  <p class="text-xs font-bold uppercase text-green-700">{article.clinic_name}</p>
+                  <h3 class="mt-2 text-xl font-bold text-gray-950">
+                    <a href={`/blog/${article.slug}`} class="hover:text-green-700">{article.title}</a>
+                  </h3>
+                  {article.excerpt && <p class="mt-3 text-sm leading-6 text-gray-600">{article.excerpt}</p>}
+                  <div class="mt-4 flex items-center justify-between gap-3 text-xs text-gray-500">
+                    <span>{article.published_at ? new Date(article.published_at).toLocaleDateString('it-IT') : ''}</span>
+                    <a href={`/blog/${article.slug}`} class="font-semibold text-green-700">Leggi l articolo</a>
+                  </div>
+                </div>
+              </article>
+            ))}
+          </div>
+        </div>
+      </section>
+    )}
+
+    <section class="border-y border-gray-200 bg-gray-50">
+      <div class="mx-auto grid max-w-7xl gap-5 px-4 py-8 sm:px-6 lg:grid-cols-2 lg:px-8">
+        {benefits.map((item) => (
+          <article class="rounded-lg bg-white p-6 shadow">
+            <h2 class="text-xl font-bold text-gray-950">{item.title}</h2>
+            <p class="mt-3 text-base leading-7 text-gray-600">{item.text}</p>
+          </article>
+        ))}
+      </div>
+    </section>
+
+    <section class="bg-white">
+      <div class="mx-auto max-w-7xl px-4 py-12 sm:px-6 lg:px-8">
+        <div class="max-w-3xl">
+          <p class="text-sm font-bold uppercase tracking-wide text-green-700">Come funziona</p>
+          <h2 class="mt-3 text-3xl font-bold text-gray-950">Workflow editoriale e verifica</h2>
+          <p class="mt-4 text-base leading-7 text-gray-600">
+            Il blog e una piattaforma a due lati: da una parte gli utenti ricevono contenuti comprensibili e contestualizzati, dall altra i veterinari possono costruire reputazione e visibilita locale partendo dalla propria scheda verificata.
+          </p>
+        </div>
+
+        <div class="mt-8 grid gap-4">
+          {workflow.map((item) => (
+            <article class="grid gap-4 rounded-lg border border-gray-200 bg-white p-5 shadow-sm sm:grid-cols-[3rem_1fr]">
+              <div class="flex h-12 w-12 items-center justify-center rounded-full bg-green-50 text-lg font-bold text-green-700">
+                {item.step}
+              </div>
+              <div>
+                <h3 class="text-lg font-bold text-gray-950">{item.title}</h3>
+                <p class="mt-2 text-sm leading-6 text-gray-600">{item.text}</p>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-green-700">
+      <div class="mx-auto grid max-w-7xl gap-6 px-4 py-10 text-white sm:px-6 lg:grid-cols-[1fr_auto] lg:items-center lg:px-8">
+        <div>
+          <h2 class="text-2xl font-bold">Vuoi pubblicare contenuti a nome della tua struttura?</h2>
+          <p class="mt-3 max-w-3xl text-sm leading-6 text-green-50">
+            Il primo passo e reclamare la scheda. Dopo la verifica puoi aprire la dashboard veterinario, preparare un articolo con una foto e inviarlo alla redazione.
+          </p>
+        </div>
+        <a href="/dashboard/veterinario" rel="nofollow" class="inline-flex items-center justify-center rounded-md bg-white px-5 py-3 text-sm font-semibold text-green-800 hover:bg-green-50">
+          Apri la dashboard
+        </a>
+      </div>
+    </section>
+  </main>
+</BaseLayout>

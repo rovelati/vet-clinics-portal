@@ -1,0 +1,31 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+
+const title = `Contattaci | ${siteConfig.name}`;
+const description = `Contatta ${siteConfig.name} per segnalazioni, aggiornamenti schede cliniche, collaborazioni e richieste editoriali.`;
+---
+
+<BaseLayout title={title} description={description} canonical={`${siteConfig.url}/contatti`}>
+  <main class="bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+    <article class="mx-auto max-w-4xl rounded-lg bg-white p-8 shadow-sm md:p-12">
+      <h1 class="text-3xl font-bold text-gray-900">Contattaci</h1>
+      <p class="mt-4 text-gray-700">Il team di {siteConfig.name} raccoglie segnalazioni, richieste di correzione e proposte di collaborazione.</p>
+      <div class="mt-8 grid gap-6 md:grid-cols-2">
+        <section class="rounded-lg border border-gray-100 bg-gray-50 p-6">
+          <h2 class="text-lg font-semibold text-gray-900">Email generale</h2>
+          <p class="mt-2 text-sm text-gray-600">Per informazioni, bug, suggerimenti e richieste editoriali.</p>
+          <a href={`mailto:${siteConfig.publicEmail}`} class="mt-3 inline-flex font-semibold text-green-700 hover:text-green-800">{siteConfig.publicEmail}</a>
+        </section>
+        <section class="rounded-lg border border-green-100 bg-green-50 p-6">
+          <h2 class="text-lg font-semibold text-gray-900">Sei un veterinario?</h2>
+          <p class="mt-2 text-sm text-gray-700">Per aggiornare una scheda gia presente, correggere dati o aggiungere servizi, puoi reclamare la struttura.</p>
+          <a href="/claim" class="mt-4 inline-flex rounded-md bg-green-700 px-4 py-2 text-sm font-semibold text-white hover:bg-green-800">Reclama la scheda</a>
+        </section>
+      </div>
+      <div class="mt-8 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+        <strong>Attenzione:</strong> {siteConfig.name} non e una clinica veterinaria e non offre consulenza medica. In caso di urgenza usa la ricerca <a href="/veterinari-h24" class="font-semibold underline">Veterinari H24</a> e contatta direttamente la struttura piu vicina.
+      </div>
+    </article>
+  </main>
+</BaseLayout>

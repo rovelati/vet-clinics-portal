@@ -1,0 +1,138 @@
+---
+import SEOHead from '@/components/SEOHead.astro';
+import Navbar from '@/components/Navbar.astro';
+import Footer from '@/components/Footer.astro';
+import { siteConfig } from '@/config/site';
+import '@/styles/global.css';
+
+interface Props {
+  title: string;
+  description?: string;
+  canonical?: string;
+  ogImage?: string;
+  ogType?: string;
+  jsonLd?: Record<string, unknown> | Record<string, unknown>[];
+  noindex?: boolean;
+}
+
+const { title, description, canonical, ogImage, ogType, jsonLd, noindex } = Astro.props;
+---
+
+<!doctype html>
+<html lang="it">
+  <head>
+    {siteConfig.cmp.enabled && siteConfig.cmp.provider === 'uniconsent' && (
+      <>
+        <script src="https://cmp.uniconsent.com/v2/stub.min.js"></script>
+        <script src="https://cmp.uniconsent.com/v2/stubgcm.min.js"></script>
+        <script async src={`https://cmp.uniconsent.com/v2/${siteConfig.cmp.id}/cmp.js`}></script>
+      </>
+    )}
+    {siteConfig.analytics.enabled && siteConfig.analytics.gtmId && (
+      <>
+        <script async src={`https://www.googletagmanager.com/gtag/js?id=${siteConfig.analytics.gtmId}`}></script>
+        <script is:inline define:vars={{ ga4Id: siteConfig.analytics.gtmId }}>
+          window.dataLayer = window.dataLayer || [];
+          function gtag(){dataLayer.push(arguments);}
+          gtag('js', new Date());
+          gtag('config', ga4Id);
+
+          document.addEventListener('click', function (event) {
+            var link = event.target && event.target.closest ? event.target.closest('a[href]') : null;
+            if (!link || typeof gtag !== 'function') return;
+
+            var href = link.getAttribute('href') || '';
+            var eventName = '';
+            if (href.indexOf('tel:') === 0) eventName = 'click_phone';
+            if (href.indexOf('mailto:') === 0) eventName = 'click_email';
+            if (/^https:\/\/www\.google\.com\/maps\/dir\?/i.test(href)) eventName = 'click_directions';
+            if (!eventName) return;
+
+            gtag('event', eventName, {
+              clinic_id: link.getAttribute('data-clinic-id') || '',
+              link_url: href,
+              link_text: (link.textContent || '').trim().slice(0, 120),
+              page_path: window.location.pathname,
+              page_location: window.location.href,
+              page_title: document.title,
+            });
+
+            try {
+              var payload = JSON.stringify({
+                event_type: eventName,
+                clinic_id: link.getAttribute('data-clinic-id') || '',
+                link_url: href,
+                link_text: (link.textContent || '').trim().slice(0, 120),
+                page_path: window.location.pathname,
+                page_location: window.location.href,
+                page_title: document.title,
+              });
+              if (navigator.sendBeacon) {
+                navigator.sendBeacon('/api/lead-event', new Blob([payload], { type: 'application/json' }));
+              } else {
+                fetch('/api/lead-event', {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: payload,
+                  keepalive: true,
+                }).catch(function () {});
+              }
+            } catch (error) {
+              // Ignore analytics delivery errors.
+            }
+          });
+        </script>
+      </>
+    )}
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="generator" content={Astro.generator} />
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" href="/favicon.ico" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+    <link rel="manifest" href="/site.webmanifest" />
+    <meta name="application-name" content={siteConfig.name} />
+    <meta name="apple-mobile-web-app-title" content={siteConfig.name} />
+    <meta name="theme-color" content="#16a34a" />
+    <SEOHead
+      title={title}
+      description={description}
+      canonical={canonical}
+      ogImage={ogImage}
+      ogType={ogType}
+      jsonLd={jsonLd}
+      noindex={noindex}
+    />
+    <script is:inline>
+      document.addEventListener('DOMContentLoaded', function () {
+        document.querySelectorAll([
+          'a[href^="/login?"]',
+          'a[href^="/register?"]',
+          'a[href^="https://www.veterinari.org/login?"]',
+          'a[href^="https://www.veterinari.org/register?"]'
+        ].join(',')).forEach(function (link) {
+          try {
+            var url = new URL(link.getAttribute('href'), window.location.origin);
+            if ((url.pathname !== '/login' && url.pathname !== '/register') || !url.searchParams.has('redirect')) return;
+            var rel = (link.getAttribute('rel') || '').split(/\s+/).filter(Boolean);
+            if (!rel.includes('nofollow')) rel.push('nofollow');
+            link.setAttribute('rel', rel.join(' '));
+          } catch (error) {
+            // Ignore malformed href values.
+          }
+        });
+      });
+    </script>
+  </head>
+  <body class="min-h-screen bg-gradient-to-br from-green-50 via-blue-50 to-purple-50 text-slate-950">
+    <div class="flex min-h-screen flex-col">
+      <Navbar />
+      <main class="flex-1">
+        <slot />
+      </main>
+      <Footer />
+    </div>
+  </body>
+</html>

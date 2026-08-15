@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import AuthCallbackApp from '@/components/react/AuthCallbackApp.jsx';
+import { siteConfig } from '@/config/site';
+---
+
+<BaseLayout
+  title={`Completamento accesso | ${siteConfig.name}`}
+  description="Completamento autenticazione."
+  canonical={`${siteConfig.url}/auth/callback`}
+  noindex={true}
+>
+  <AuthCallbackApp client:load />
+</BaseLayout>

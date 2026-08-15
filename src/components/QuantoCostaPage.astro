@@ -1,0 +1,169 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import QuantoCostaApp from '@/components/react/QuantoCostaApp.jsx';
+import { siteConfig } from '@/config/site';
+import { supabasePublicServer } from '@/lib/supabase';
+
+function cleanText(value: unknown) {
+  return typeof value === 'string' ? value.replace(/"/g, '').trim() : '';
+}
+
+function slugify(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+async function loadAllRows(table: string, select: string) {
+  if (!supabasePublicServer) return [];
+  const pageSize = 1000;
+  let offset = 0;
+  let rows: any[] = [];
+
+  while (true) {
+    const { data, error } = await supabasePublicServer
+      .from(table)
+      .select(select)
+      .range(offset, offset + pageSize - 1);
+
+    if (error) {
+      console.error(`Errore caricamento ${table}:`, error.message);
+      return rows;
+    }
+
+    rows = rows.concat(data ?? []);
+    if (!data || data.length < pageSize) break;
+    offset += pageSize;
+  }
+
+  return rows;
+}
+
+function computeServiceStats(taxonomyRows: any[], priceRows: any[]) {
+  const priceByService = new Map<string, { prices: number[]; animals: Set<string> }>();
+
+  priceRows.forEach((row) => {
+    if (!row.service_id || row.price === null || row.price === undefined) return;
+    const price = Number(row.price);
+    if (!Number.isFinite(price)) return;
+    const bucket = priceByService.get(row.service_id) || { prices: [], animals: new Set<string>() };
+    bucket.prices.push(price);
+    const animalType = cleanText(row.animal_type);
+    if (animalType) bucket.animals.add(animalType);
+    priceByService.set(row.service_id, bucket);
+  });
+
+  return taxonomyRows
+    .filter((service) => service.allow_price !== false)
+    .map((service) => {
+      const bucket = priceByService.get(service.id);
+      const prices = bucket ? bucket.prices.sort((a, b) => a - b) : [];
+      const count = prices.length;
+      const mid = Math.floor(count / 2);
+      const median = count ? (count % 2 ? prices[mid] : (prices[mid - 1] + prices[mid]) / 2) : null;
+      const min = count ? prices[0] : null;
+      const max = count ? prices[count - 1] : null;
+      const avg = count ? prices.reduce((sum, value) => sum + value, 0) / count : null;
+      const averagePriceFromTaxonomy = service.average_price === null || service.average_price === undefined
+        ? null
+        : Number(service.average_price);
+
+      return {
+        id: service.id,
+        name: cleanText(service.name),
+        category: cleanText(service.category),
+        slug: slugify(service.name),
+        count,
+        min,
+        max,
+        median,
+        avg,
+        averagePriceFromTaxonomy: Number.isFinite(averagePriceFromTaxonomy) ? averagePriceFromTaxonomy : null,
+        allowPrice: service.allow_price !== false,
+        animals: bucket ? Array.from(bucket.animals) : [],
+      };
+    })
+    .filter((service) => service.name && service.slug)
+    .sort((a, b) => a.name.localeCompare(b.name, 'it'));
+}
+
+const [taxonomyRows, priceRows] = await Promise.all([
+  loadAllRows('services_taxonomy', 'id, name, category, average_price, allow_price'),
+  loadAllRows('services_prices', 'service_id, price, animal_type'),
+]);
+
+const serviceStats = computeServiceStats(taxonomyRows, priceRows);
+const topServices = [...serviceStats]
+  .filter((service) => service.count > 0)
+  .sort((a, b) => b.count - a.count)
+  .slice(0, 5);
+const priceRowsCount = serviceStats.reduce((sum, service) => sum + service.count, 0);
+
+const title = `Quanto Costa? Prezzi Servizi Veterinari in Italia | ${siteConfig.name}`;
+const description = 'Consulta i dati raccolti dalle cliniche veterinarie e scopri quanto costa ogni prestazione: visite, vaccinazioni, chirurgia, diagnostica e servizi per cane e gatto.';
+const canonical = `${siteConfig.url}/quanto-costa`;
+
+const collectionLd = {
+  '@context': 'https://schema.org',
+  '@type': 'CollectionPage',
+  name: title,
+  description,
+  url: canonical,
+  mainEntity: {
+    '@type': 'ItemList',
+    numberOfItems: topServices.length,
+    itemListElement: topServices.map((service, index) => ({
+      '@type': 'ListItem',
+      position: index + 1,
+      item: {
+        '@type': 'Service',
+        name: service.name,
+        category: service.category || 'Servizi veterinari',
+        url: `${siteConfig.url}/quanto-costa/${service.slug}`,
+        offers: (service.median || service.averagePriceFromTaxonomy) ? {
+          '@type': 'Offer',
+          price: service.median || service.averagePriceFromTaxonomy,
+          priceCurrency: 'EUR',
+          availability: 'https://schema.org/InStock',
+        } : undefined,
+      },
+    })),
+  },
+};
+
+const breadcrumbLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: siteConfig.name, item: siteConfig.url },
+    { '@type': 'ListItem', position: 2, name: 'Quanto Costa?', item: canonical },
+  ],
+};
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  canonical={canonical}
+  ogImage="https://images.unsplash.com/photo-1628009368231-7bb7cfcb0def"
+  jsonLd={[collectionLd, breadcrumbLd]}
+>
+  <QuantoCostaApp client:load initialStats={serviceStats} />
+  <section class="bg-white py-10">
+    <div class="mx-auto max-w-7xl px-4 text-sm leading-7 text-gray-600 sm:px-6 lg:px-8">
+      <p>
+        I prezzi sono indicativi e derivano da dati pubblicati o comunicati dalle cliniche veterinarie.
+        Possono variare in base a specie, peso, urgenza, materiali, farmaci, esami associati e condizioni cliniche.
+        Per confermare disponibilita e tariffa finale contatta sempre direttamente la struttura.
+      </p>
+      <p class="mt-2 text-xs text-gray-500">
+        Archivio attuale: {serviceStats.length} prestazioni abilitate, {priceRowsCount} prezzi raccolti.
+      </p>
+    </div>
+  </section>
+</BaseLayout>

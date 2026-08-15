@@ -1,0 +1,32 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+
+const title = `Credits | ${siteConfig.name}`;
+const description = `Credits di ${siteConfig.name}: progetto, fonti pubbliche, directory e strumenti che supportano la visibilita online.`;
+const directories = [
+  { name: 'PagineGialle - Veterinari', url: 'https://www.paginegialle.it/ricerca/veterinario' },
+  { name: 'Google Business Profile', url: 'https://www.google.com/business/' },
+  { name: 'Bing Places', url: 'https://www.bingplaces.com/' },
+  { name: 'Apple Business Connect', url: 'https://businessconnect.apple.com/' },
+];
+---
+
+<BaseLayout title={title} description={description} canonical={`${siteConfig.url}/credits`}>
+  <main class="bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+    <article class="mx-auto max-w-4xl rounded-lg bg-white p-8 shadow-sm md:p-12">
+      <h1 class="text-3xl font-bold text-gray-900">Credits</h1>
+      <p class="mt-4 text-gray-700">{siteConfig.name} e una piattaforma dedicata a chi cerca veterinari e cliniche in Italia, con informazioni organizzate per localita, servizi e percorsi di ricerca.</p>
+      <section class="mt-8">
+        <h2 class="text-xl font-semibold text-gray-900">Fonti e strumenti utili</h2>
+        <ul class="mt-4 space-y-3">
+          {directories.map((item) => (
+            <li class="rounded-lg border border-gray-200 p-4">
+              <a href={item.url} target="_blank" rel="noopener noreferrer" class="font-semibold text-green-700 hover:text-green-800">{item.name}</a>
+            </li>
+          ))}
+        </ul>
+      </section>
+    </article>
+  </main>
+</BaseLayout>

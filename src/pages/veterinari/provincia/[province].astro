@@ -1,0 +1,8 @@
+---
+import VeterinariAreaPage from '@/components/VeterinariAreaPage.astro';
+import { provinceLabel } from '@/lib/seo-urls';
+
+const province = provinceLabel(Astro.params.province || '');
+---
+
+<VeterinariAreaPage kind="province" label={province} />

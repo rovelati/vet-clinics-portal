@@ -1,0 +1,1363 @@
+---
+import { createHmac } from 'node:crypto';
+import { ArrowLeft, Mail, MapPin, Search } from 'lucide-react';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import ClinicCard from '@/components/ClinicCard.astro';
+import ServiceClinicsMap from '@/components/react/ServiceClinicsMap.jsx';
+import { siteConfig } from '@/config/site';
+import { clinicImage } from '@/lib/clinics';
+import { slugifyLocation } from '@/lib/seo-urls';
+import { serviceHasAnimalContext, serviceNameForAnimalSeo, serviceNameForAnimalTitle, servicePlainLanguageExplanation } from '@/lib/service-seo';
+import { supabasePublicServer } from '@/lib/supabase';
+
+interface Props {
+  serviceSlug: string;
+  locationParam?: string;
+}
+
+const { serviceSlug, locationParam = '' } = Astro.props;
+const MIN_LOCAL_RESULTS = 5;
+const GEOIP_RESULTS_LIMIT = 10;
+
+function cleanText(value: unknown) {
+  return typeof value === 'string' ? value.replace(/"/g, '').trim() : '';
+}
+
+function slugify(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+function serviceSlugAliases(value: unknown) {
+  const base = slugify(value);
+  const compact = cleanText(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/[\s-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return Array.from(new Set([base, compact].filter(Boolean)));
+}
+
+function parseLocation(value: string) {
+  const cleaned = cleanText(value);
+  if (!cleaned) return { city: '', province: '', label: '' };
+  const match = cleaned.match(/^(.+)-([a-z]{2})$/i);
+  if (match) {
+    const city = match[1].split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+    const province = match[2].toUpperCase();
+    return { city, province, label: `${city}, ${province}` };
+  }
+  const city = cleaned.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+  return { city, province: '', label: city };
+}
+
+function readHeader(headers: Headers, names: string[]) {
+  for (const name of names) {
+    const value = headers.get(name);
+    if (value && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function geoIpLocationFromHeaders(headers: Headers) {
+  const country = readHeader(headers, ['cf-ipcountry', 'x-vercel-ip-country']).toUpperCase();
+  if (country && country !== 'IT') return null;
+
+  const city = decodeURIComponent(readHeader(headers, ['cf-ipcity', 'x-vercel-ip-city']).replace(/\+/g, ' '));
+  const province = readHeader(headers, ['cf-region-code', 'x-vercel-ip-country-region']).toUpperCase();
+  const lat = numericCoordinate(readHeader(headers, ['cf-iplatitude', 'x-vercel-ip-latitude']));
+  const lng = numericCoordinate(readHeader(headers, ['cf-iplongitude', 'x-vercel-ip-longitude']));
+  if (lat === null || lng === null) return null;
+
+  return {
+    lat,
+    lng,
+    city: cleanText(city),
+    province: cleanText(province),
+    label: [cleanText(city), cleanText(province)].filter(Boolean).join(', ') || 'la tua zona',
+  };
+}
+
+function normalizedBoundaryText(value: unknown) {
+  return ` ${cleanText(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .trim()} `;
+}
+
+function containsBoundaryText(haystack: unknown, needle: unknown) {
+  const normalizedNeedle = normalizedBoundaryText(needle).trim();
+  return Boolean(normalizedNeedle) && normalizedBoundaryText(haystack).includes(` ${normalizedNeedle} `);
+}
+
+function serviceTokens(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(/\s+/)
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3);
+}
+
+const serviceTokenAliases: Record<string, string[]> = {
+  sterilizzazione: ['sterilizzazione', 'sterilizzazioni', 'sterilizzazion', 'sterilizz'],
+  sterilizzazioni: ['sterilizzazione', 'sterilizzazioni', 'sterilizzazion', 'sterilizz'],
+  sterilizzazion: ['sterilizzazione', 'sterilizzazioni', 'sterilizzazion', 'sterilizz'],
+  sterilizz: ['sterilizzazione', 'sterilizzazioni', 'sterilizzazion', 'sterilizz'],
+  castrazione: ['castrazione', 'castrazioni', 'castrazion', 'castr'],
+  castrazioni: ['castrazione', 'castrazioni', 'castrazion', 'castr'],
+  castrazion: ['castrazione', 'castrazioni', 'castrazion', 'castr'],
+  castr: ['castrazione', 'castrazioni', 'castrazion', 'castr'],
+  vaccino: ['vaccino', 'vaccini', 'vaccinazione', 'vaccinazioni', 'vaccin'],
+  vaccini: ['vaccino', 'vaccini', 'vaccinazione', 'vaccinazioni', 'vaccin'],
+  vaccinazione: ['vaccino', 'vaccini', 'vaccinazione', 'vaccinazioni', 'vaccin'],
+  ecografia: ['ecografia', 'ecografie', 'eco', 'ecograf'],
+  radiografia: ['radiografia', 'radiografie', 'rx', 'radiograf'],
+  analisi: ['analisi', 'esame', 'esami', 'test'],
+  sangue: ['sangue', 'ematico', 'ematologico', 'ematochimico'],
+  cane: ['cane', 'cani', 'canina', 'canino'],
+  gatto: ['gatto', 'gatti', 'gatta', 'felina', 'felino'],
+  coniglio: ['coniglio', 'conigli', 'coniglia'],
+};
+
+function expandServiceToken(token: string) {
+  return serviceTokenAliases[token] || [token];
+}
+
+function serviceMatchScore(targetService: any, candidateService: any) {
+  const targetTokens = serviceTokens(`${targetService?.name || ''} ${targetService?.category || ''}`);
+  const candidateTokens = serviceTokens(`${candidateService?.name || ''} ${candidateService?.category || ''}`);
+  if (!targetTokens.length || !candidateTokens.length) return 0;
+
+  const candidateSet = new Set(candidateTokens);
+  const matched = targetTokens.filter((token) =>
+    expandServiceToken(token).some((alias) =>
+      candidateSet.has(alias) || candidateTokens.some((candidate) => candidate.startsWith(alias) || alias.startsWith(candidate))
+    )
+  );
+
+  const familyTokens = ['sterilizzazione', 'sterilizzazioni', 'sterilizzazion', 'sterilizz', 'castrazione', 'castrazioni', 'castrazion', 'castr', 'vaccino', 'vaccini', 'vaccinazione', 'ecografia', 'radiografia', 'analisi'];
+  const familyMatched = matched.some((token) => familyTokens.some((family) => expandServiceToken(token).includes(family)));
+  if (!familyMatched) return 0;
+
+  return matched.length;
+}
+
+function relatedServiceIdsFor(targetService: any, allServices: any[]) {
+  if (!targetService) return [];
+  return allServices
+    .filter((candidate: any) => candidate.id !== targetService.id)
+    .map((candidate: any) => ({ id: candidate.id, score: serviceMatchScore(targetService, candidate) }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, 12)
+    .map((candidate) => candidate.id);
+}
+
+function formatCurrency(value: unknown) {
+  const price = Number(value);
+  return Number.isFinite(price) ? `${price.toFixed(0)} €` : 'n.d.';
+}
+
+function numericCoordinate(value: unknown) {
+  const coordinate = Number(value);
+  return Number.isFinite(coordinate) ? coordinate : null;
+}
+
+function locationCenterFromClinics(clinics: any[]) {
+  const points = clinics
+    .map((clinic: any) => ({ lat: numericCoordinate(clinic.lat), lng: numericCoordinate(clinic.lng) }))
+    .filter((point) => point.lat !== null && point.lng !== null) as Array<{ lat: number; lng: number }>;
+  if (!points.length) return null;
+  return {
+    lat: points.reduce((sum, point) => sum + point.lat, 0) / points.length,
+    lng: points.reduce((sum, point) => sum + point.lng, 0) / points.length,
+  };
+}
+
+function distanceKm(from: { lat: number; lng: number } | null, clinic: any) {
+  if (!from) return null;
+  const lat = numericCoordinate(clinic.lat);
+  const lng = numericCoordinate(clinic.lng);
+  if (lat === null || lng === null) return null;
+  const earthRadiusKm = 6371;
+  const toRadians = (degree: number) => degree * Math.PI / 180;
+  const dLat = toRadians(lat - from.lat);
+  const dLng = toRadians(lng - from.lng);
+  const a = Math.sin(dLat / 2) ** 2
+    + Math.cos(toRadians(from.lat)) * Math.cos(toRadians(lat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function mergeUniqueClinics(...groups: any[][]) {
+  const clinics = new Map<string, any>();
+  groups.flat().forEach((clinic: any) => {
+    if (!clinic?.id) return;
+    clinics.set(clinic.id, { ...clinics.get(clinic.id), ...clinic });
+  });
+  return Array.from(clinics.values());
+}
+
+async function loadServices() {
+  if (!supabasePublicServer) return [];
+  const { data, error } = await supabasePublicServer
+    .from('services_taxonomy')
+    .select('id, name, category, average_price, allow_price')
+    .limit(500);
+
+  if (error) {
+    console.error('Errore caricamento servizio listing:', error.message);
+    return [];
+  }
+
+  return data ?? [];
+}
+
+async function loadPrices(serviceId: string) {
+  if (!supabasePublicServer || !serviceId) return [];
+  const { data, error } = await supabasePublicServer
+    .from('services_prices')
+    .select('clinic_id, service_id, price, animal_type')
+    .eq('service_id', serviceId)
+    .not('clinic_id', 'is', null)
+    .order('price', { ascending: true })
+    .limit(500);
+
+  if (error) {
+    console.error('Errore caricamento prezzi servizio:', error.message);
+    return [];
+  }
+
+  return data ?? [];
+}
+
+async function loadClinics(ids: string[]) {
+  if (!supabasePublicServer || ids.length === 0) return [];
+  const { data, error } = await supabasePublicServer
+    .from('clinics')
+    .select(`
+      id, name, address, phone, email, slug, lat, lng, service_ids,
+      rating_avg_cached, rating_count_cached,
+      raw_import, gallery_images, deepupdate_payload
+    `)
+    .in('id', ids)
+    .eq('status', 'pubblicata')
+    .not('slug', 'is', null)
+    .limit(500);
+
+  if (error) {
+    console.error('Errore caricamento cliniche servizio:', error.message);
+    return [];
+  }
+
+  return data ?? [];
+}
+
+async function loadDeclaredServiceClinics(serviceIds: string[], locationInfo: { city: string; province: string; label: string }) {
+  if (!supabasePublicServer || serviceIds.length === 0) return [];
+
+  const runRequest = async (scope: 'city' | 'province' | 'none') => {
+    let request = supabasePublicServer
+      .from('clinics')
+      .select(`
+        id, name, address, phone, email, slug, lat, lng, service_ids,
+        rating_avg_cached, rating_count_cached,
+        raw_import, gallery_images, deepupdate_payload
+      `)
+      .eq('status', 'pubblicata')
+      .not('slug', 'is', null)
+      .order('rating_avg_cached', { ascending: false, nullsFirst: false })
+      .order('rating_count_cached', { ascending: false, nullsFirst: false })
+      .limit(500);
+
+    request = request.overlaps('service_ids', serviceIds);
+
+    if (scope === 'city' && locationInfo.city) {
+      request = request.filter('raw_import->>city', 'eq', locationInfo.city.replace(/[%,]/g, ' ').trim());
+    } else if (scope === 'province' && locationInfo.province) {
+      request = request.filter('raw_import->>province', 'eq', locationInfo.province.replace(/[%,]/g, ' ').toUpperCase());
+    }
+
+    return request;
+  };
+
+  const primaryScope = locationInfo.city ? 'city' : locationInfo.province ? 'province' : 'none';
+  const { data, error } = await runRequest(primaryScope);
+  if (error) {
+    console.error('Errore caricamento cliniche con prestazione dichiarata:', error.message);
+    return [];
+  }
+  if ((data ?? []).length >= MIN_LOCAL_RESULTS || primaryScope !== 'city' || !locationInfo.province) return data ?? [];
+
+  const fallback = await runRequest('province');
+  if (fallback.error) {
+    console.error('Errore fallback provincia cliniche con prestazione dichiarata:', fallback.error.message);
+    return data ?? [];
+  }
+  return mergeUniqueClinics(data ?? [], fallback.data ?? []);
+}
+
+async function loadCandidateClinics(locationInfo: { city: string; province: string; label: string }) {
+  if (!supabasePublicServer) return [];
+
+  const runRequest = async (scope: 'city' | 'province') => {
+    let request = supabasePublicServer
+      .from('clinics')
+      .select(`
+        id, name, address, phone, email, slug, lat, lng, service_ids,
+        rating_avg_cached, rating_count_cached,
+        raw_import, gallery_images, deepupdate_payload
+      `)
+      .eq('status', 'pubblicata')
+      .not('slug', 'is', null)
+      .order('rating_avg_cached', { ascending: false, nullsFirst: false })
+      .order('rating_count_cached', { ascending: false, nullsFirst: false })
+      .limit(80);
+
+    if (scope === 'city' && locationInfo.city) {
+      const city = locationInfo.city.replace(/[%,]/g, ' ').trim();
+      request = request.filter('raw_import->>city', 'eq', city);
+    } else if (scope === 'province' && locationInfo.province) {
+      const province = locationInfo.province.replace(/[%,]/g, ' ').trim();
+      request = request.filter('raw_import->>province', 'eq', province.toUpperCase());
+    }
+
+    return request;
+  };
+
+  const primaryScope = locationInfo.city ? 'city' : 'province';
+  const { data, error } = await runRequest(primaryScope);
+  if (error) {
+    console.error('Errore caricamento cliniche candidate:', error.message);
+    return [];
+  }
+  if ((data ?? []).length >= MIN_LOCAL_RESULTS || primaryScope !== 'city' || !locationInfo.province) return data ?? [];
+
+  const fallback = await runRequest('province');
+  if (fallback.error) {
+    console.error('Errore fallback provincia cliniche candidate:', fallback.error.message);
+    return data ?? [];
+  }
+  return mergeUniqueClinics(data ?? [], fallback.data ?? []);
+}
+
+async function loadNearbyLocationLinks(
+  locationInfo: { city: string; province: string; label: string },
+  serviceSlug: string
+) {
+  if (!supabasePublicServer || !locationInfo.province) return [];
+
+  const { data, error } = await supabasePublicServer
+    .from('clinics')
+    .select('raw_import')
+    .eq('status', 'pubblicata')
+    .not('slug', 'is', null)
+    .filter('raw_import->>province', 'eq', locationInfo.province.replace(/[%,]/g, ' ').toUpperCase())
+    .limit(500);
+
+  if (error) {
+    console.error('Errore caricamento localita vicine:', error.message);
+    return [];
+  }
+
+  const currentCity = cleanText(locationInfo.city).toLowerCase();
+  const currentProvince = cleanText(locationInfo.province).toUpperCase();
+  const cityCounts = new Map<string, { city: string; province: string; count: number }>();
+
+  (data ?? []).forEach((clinic: any) => {
+    const city = cleanText(clinic.raw_import?.city);
+    const province = cleanText(clinic.raw_import?.province).toUpperCase() || currentProvince;
+    if (!city || !province || city.toLowerCase() === currentCity) return;
+    const key = `${city.toLowerCase()}|${province}`;
+    const current = cityCounts.get(key) || { city, province, count: 0 };
+    current.count += 1;
+    cityCounts.set(key, current);
+  });
+
+  return Array.from(cityCounts.values())
+    .sort((a, b) => b.count - a.count || a.city.localeCompare(b.city, 'it'))
+    .slice(0, 3)
+    .map((item) => ({
+      label: `${serviceNameFromSlug(serviceSlug)} a ${item.city}, ${item.province}`,
+      href: `/quanto-costa/${slugifyLocation(item.city)}-${item.province.toLowerCase()}/${serviceSlug}/cliniche`,
+    }));
+}
+
+function serviceNameFromSlug(value: string) {
+  return titleCaseServiceName(value.split('-').filter(Boolean).join(' '));
+}
+
+function titleCaseServiceName(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .split(/(\s+|-|\/)/)
+    .map((part) => /^[a-zà-ÿ]/i.test(part) ? part.charAt(0).toUpperCase() + part.slice(1) : part)
+    .join('');
+}
+
+function lowerItalianPrepositions(value: unknown) {
+  const lowercaseWords = new Set(['a', 'ad', 'al', 'allo', 'alla', 'alle', 'ai', 'agli', 'da', 'dal', 'dallo', 'dalla', 'dalle', 'dai', 'dagli', 'di', 'del', 'dello', 'della', 'delle', 'dei', 'degli', 'in', 'con', 'per']);
+  return cleanText(value)
+    .split(/\s+/)
+    .map((word, index) => index > 0 && lowercaseWords.has(word.toLowerCase()) ? word.toLowerCase() : word)
+    .join(' ');
+}
+
+function clinicHasService(clinic: any, serviceId: string) {
+  return serviceId && Array.isArray(clinic.service_ids) && clinic.service_ids.includes(serviceId);
+}
+
+function clinicFnoviSemanticSuggestions(clinic: any) {
+  const items = clinic.deepupdate_payload?.fnovi_semantic_service_suggestions?.items;
+  if (!Array.isArray(items)) return [];
+  return items.filter((item: any) =>
+    item?.status === 'auto_approved_affine'
+    && item?.service_id
+    && Number(item.confidence || 0) >= 0.8
+  );
+}
+
+function clinicMatchesLocation(clinic: any, locationInfo: { city: string; province: string }) {
+  if (!locationInfo.city && !locationInfo.province) return true;
+  const cityNeedle = locationInfo.city.toLowerCase();
+  const provinceNeedle = locationInfo.province.toLowerCase();
+  const city = cleanText(clinic.raw_import?.city).toLowerCase();
+  const province = cleanText(clinic.raw_import?.province).toLowerCase();
+  const address = cleanText(clinic.address);
+  return (!cityNeedle || city === cityNeedle || containsBoundaryText(address, cityNeedle))
+    && (!provinceNeedle || province === provinceNeedle);
+}
+
+function clinicResultRank(clinic: any) {
+  return clinic.servicePrice ? 0 : clinic.hasExactDeclaredService ? 1 : clinic.hasRelatedDeclaredService || clinic.hasInferredService ? 2 : 3;
+}
+
+const services = await loadServices();
+const service = services.find((item: any) => serviceSlugAliases(item.name).includes(serviceSlug));
+const prices = service ? await loadPrices(service.id) : [];
+const clinicIds = Array.from(new Set(prices.map((price: any) => price.clinic_id).filter(Boolean)));
+const locationInfo = parseLocation(locationParam);
+const relatedServiceIds = service ? relatedServiceIdsFor(service, services) : [];
+const declaredServiceIds = service ? [service.id, ...relatedServiceIds] : [];
+const [pricedClinics, declaredServiceClinics, candidateClinics] = await Promise.all([
+  loadClinics(clinicIds),
+  service ? loadDeclaredServiceClinics(declaredServiceIds, locationInfo) : Promise.resolve([]),
+  service ? loadCandidateClinics(locationInfo) : Promise.resolve([]),
+]);
+
+const bestPriceByClinic = prices.reduce((acc: Map<string, any>, price: any) => {
+  const current = acc.get(price.clinic_id);
+  if (!current || Number(price.price) < Number(current.price)) acc.set(price.clinic_id, price);
+  return acc;
+}, new Map<string, any>());
+
+const clinicMap = new Map<string, any>();
+[...pricedClinics, ...declaredServiceClinics, ...candidateClinics].forEach((clinic: any) => {
+  if (!clinic?.id) return;
+  clinicMap.set(clinic.id, { ...clinicMap.get(clinic.id), ...clinic });
+});
+
+let allClinicResults = Array.from(clinicMap.values()).map((clinic: any) => {
+  const servicePrice = bestPriceByClinic.get(clinic.id) || null;
+  const hasExactDeclaredService = Boolean(servicePrice) || clinicHasService(clinic, service?.id);
+  const hasRelatedDeclaredService = !hasExactDeclaredService
+    && relatedServiceIds.some((serviceId) => clinicHasService(clinic, serviceId));
+  const inferredSuggestions = clinicFnoviSemanticSuggestions(clinic);
+  const inferredService = inferredSuggestions.find((item: any) => item.service_id === service?.id)
+    || inferredSuggestions.find((item: any) => relatedServiceIds.includes(item.service_id))
+    || null;
+  const hasInferredService = !hasExactDeclaredService && !hasRelatedDeclaredService && Boolean(inferredService);
+  const hasDeclaredService = hasExactDeclaredService || hasRelatedDeclaredService;
+  return {
+    ...clinic,
+    servicePrice,
+    hasDeclaredService,
+    hasExactDeclaredService,
+    hasRelatedDeclaredService,
+    hasInferredService,
+    inferredService,
+    resultType: servicePrice ? 'price' : hasExactDeclaredService ? 'declared' : hasRelatedDeclaredService || hasInferredService ? 'related' : 'possible',
+    resultLabel: servicePrice ? 'Prezzo pubblicato' : hasExactDeclaredService ? 'Prestazione dichiarata' : hasRelatedDeclaredService || hasInferredService ? 'Servizio affine' : 'Chiedi disponibilita',
+    resultDescription: servicePrice
+      ? 'La clinica ha pubblicato un prezzo per questa prestazione.'
+      : hasExactDeclaredService
+        ? 'La clinica indica questa prestazione tra i servizi disponibili.'
+        : hasRelatedDeclaredService
+          ? `La clinica dichiara servizi affini a ${serviceNameFromSlug(serviceSlug).toLowerCase()}. Chiedi conferma su disponibilita, prezzo e dettaglio della prestazione.`
+          : hasInferredService
+            ? `La struttura risulta associata a ${cleanText(inferredService?.evidence?.[0]?.fnovi_service || 'un servizio generale affine').toLowerCase()}. Contatta la clinica per confermare la prestazione specifica, la disponibilita e il prezzo.`
+            : 'Clinica veterinaria nella zona: contattala senza impegno per sapere se esegue la prestazione e conoscere disponibilita e prezzo.',
+  };
+});
+
+let searchCenter: { lat: number; lng: number } | null = null;
+const geoIpLocation = !locationParam ? geoIpLocationFromHeaders(Astro.request.headers) : null;
+const isGeoIpEstimatedListing = Boolean(!locationParam && geoIpLocation);
+
+if (locationInfo.city || locationInfo.province) {
+  const cityScopedResults = allClinicResults.filter((clinic: any) => clinicMatchesLocation(clinic, locationInfo));
+  searchCenter = locationCenterFromClinics(cityScopedResults);
+  if (cityScopedResults.length >= MIN_LOCAL_RESULTS || !locationInfo.city || !locationInfo.province) {
+    allClinicResults = cityScopedResults;
+  } else {
+    allClinicResults = allClinicResults.filter((clinic: any) => clinicMatchesLocation(clinic, { city: '', province: locationInfo.province }));
+  }
+} else if (geoIpLocation) {
+  searchCenter = { lat: geoIpLocation.lat, lng: geoIpLocation.lng };
+  allClinicResults = allClinicResults.filter((clinic: any) => numericCoordinate(clinic.lat) !== null && numericCoordinate(clinic.lng) !== null);
+}
+
+if (searchCenter) {
+  allClinicResults = allClinicResults.map((clinic: any) => ({
+    ...clinic,
+    distanceKm: distanceKm(searchCenter, clinic),
+  }));
+}
+
+allClinicResults.sort((a: any, b: any) => {
+  const sortableDistance = (clinic: any) => Number.isFinite(Number(clinic.distanceKm)) ? Number(clinic.distanceKm) : Number.POSITIVE_INFINITY;
+  if (searchCenter) {
+    const distanceA = sortableDistance(a);
+    const distanceB = sortableDistance(b);
+    const bandA = Math.floor(distanceA / 10);
+    const bandB = Math.floor(distanceB / 10);
+    if (bandA !== bandB) return bandA - bandB;
+  }
+  const rankDelta = clinicResultRank(a) - clinicResultRank(b);
+  if (rankDelta !== 0) return rankDelta;
+  if (searchCenter) {
+    const distanceDelta = sortableDistance(a) - sortableDistance(b);
+    if (Number.isFinite(distanceDelta) && distanceDelta !== 0) return distanceDelta;
+  }
+  const priceA = Number(a.servicePrice?.price);
+  const priceB = Number(b.servicePrice?.price);
+  if (Number.isFinite(priceA) && Number.isFinite(priceB) && priceA !== priceB) return priceA - priceB;
+  return (Number(b.rating_avg_cached) || 0) - (Number(a.rating_avg_cached) || 0);
+});
+
+const cityOnlyResultCount = locationInfo.city && locationInfo.province
+  ? allClinicResults.filter((clinic: any) => clinicMatchesLocation(clinic, locationInfo)).length
+  : allClinicResults.length;
+const hasExpandedArea = Boolean(locationInfo.city && locationInfo.province && allClinicResults.length > cityOnlyResultCount && cityOnlyResultCount < MIN_LOCAL_RESULTS);
+
+if (hasExpandedArea) {
+  allClinicResults = allClinicResults.slice(0, MIN_LOCAL_RESULTS);
+}
+
+if (isGeoIpEstimatedListing) {
+  allClinicResults = allClinicResults.slice(0, GEOIP_RESULTS_LIMIT);
+}
+
+const exactClinics = allClinicResults.filter((clinic: any) => clinic.servicePrice || clinic.hasExactDeclaredService);
+const relatedClinics = allClinicResults.filter((clinic: any) => clinic.hasRelatedDeclaredService);
+const inferredClinics = allClinicResults.filter((clinic: any) => clinic.hasInferredService);
+const affineClinics = [...relatedClinics, ...inferredClinics];
+const possibleClinics = allClinicResults.filter((clinic: any) => !clinic.hasDeclaredService && !clinic.hasInferredService);
+const declaredClinics = [...exactClinics, ...relatedClinics];
+const orderedClinicResults = [...exactClinics, ...affineClinics, ...possibleClinics];
+const pageSize = 10;
+const requestedPage = Number(Astro.url.searchParams.get('page') || '1');
+const currentPage = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
+const totalPages = Math.max(1, Math.ceil(orderedClinicResults.length / pageSize));
+const safeCurrentPage = Math.min(currentPage, totalPages);
+const pageStart = (safeCurrentPage - 1) * pageSize;
+const clinicResults = orderedClinicResults.slice(pageStart, pageStart + pageSize);
+const mapClinicResults = clinicResults.map((clinic: any) => ({
+  id: clinic.id,
+  name: clinic.name,
+  address: clinic.address,
+  slug: clinic.slug,
+  lat: clinic.lat,
+  lng: clinic.lng,
+  servicePrice: clinic.servicePrice?.price ? { price: clinic.servicePrice.price } : null,
+  hasExactDeclaredService: Boolean(clinic.hasExactDeclaredService),
+  hasRelatedDeclaredService: Boolean(clinic.hasRelatedDeclaredService),
+  hasInferredService: Boolean(clinic.hasInferredService),
+}));
+const showingFrom = orderedClinicResults.length > 0 ? pageStart + 1 : 0;
+const showingTo = Math.min(pageStart + pageSize, orderedClinicResults.length);
+const serviceName = titleCaseServiceName(cleanText(service?.name) || serviceSlug.split('-').join(' '));
+const seoServiceName = serviceNameForAnimalSeo(serviceName);
+const seoTitleServiceName = serviceNameForAnimalTitle(serviceName);
+const serviceNameForCopy = lowerItalianPrepositions(serviceName);
+const locationLabel = locationInfo.label;
+const estimatedLocationLabel = locationLabel || (isGeoIpEstimatedListing ? geoIpLocation?.label || '' : '');
+const quoteClinics = orderedClinicResults.filter((clinic: any) => cleanText(clinic.email)).slice(0, 20);
+const quoteClinicIds = quoteClinics.map((clinic: any) => String(clinic.id)).filter(Boolean);
+const quoteClinicOptions = quoteClinics.map((clinic: any) => ({
+  id: String(clinic.id),
+  name: cleanText(clinic.name),
+  resultType: cleanText(clinic.resultType),
+  resultLabel: cleanText(clinic.resultLabel),
+}));
+const quoteClinicCount = quoteClinicIds.length;
+const nearbyLocationLinks = service ? await loadNearbyLocationLinks(locationInfo, serviceSlug) : [];
+const relatedServiceLinks = service
+  ? services
+    .filter((item: any) => item.id !== service.id && (!service.category || item.category === service.category))
+    .slice(0, 3)
+    .map((item: any) => {
+      const slug = slugify(item.name);
+      return {
+        label: locationLabel ? `${cleanText(item.name)} a ${locationLabel}` : cleanText(item.name),
+        href: locationParam ? `/quanto-costa/${locationParam}/${slug}/cliniche` : `/quanto-costa/${slug}/cliniche`,
+      };
+    })
+  : [];
+const quoteSubject = `Richiesta preventivo: ${serviceName}${locationLabel ? ` a ${locationLabel}` : ''}`;
+const serviceIsAnimalSpecific = serviceHasAnimalContext(serviceName);
+const plainLanguageExplanation = servicePlainLanguageExplanation(serviceName);
+const defaultQuoteMessage = [
+  `Vorrei chiedere un preventivo per ${serviceNameForCopy}${locationLabel ? ` a ${locationLabel}` : ''}.`,
+  'Potete indicarmi prezzo indicativo, disponibilita e tempi?',
+  '',
+  'Grazie',
+].join('\n');
+const quoteHeading = `Richiedi Preventivo per ${serviceNameForCopy}${locationLabel ? ` a ${locationLabel}` : ''}`;
+const captchaSecret = import.meta.env.AUTH_SECRET || process.env.AUTH_SECRET || import.meta.env.SUPABASE_SERVICE_ROLE_KEY || 'dev-quote-captcha-secret';
+const captchaA = Math.floor(Math.random() * 8) + 2;
+const captchaB = Math.floor(Math.random() * 8) + 2;
+const captchaExpires = Date.now() + 1000 * 60 * 30;
+const captchaPayload = `${captchaA}:${captchaB}:${captchaExpires}`;
+const captchaSignature = createHmac('sha256', captchaSecret).update(captchaPayload).digest('base64url');
+const captchaToken = `${captchaPayload}.${captchaSignature}`;
+const title = locationLabel
+  ? `${seoTitleServiceName} a ${locationLabel}: prezzi e preventivi | ${siteConfig.name}`
+  : `${seoTitleServiceName}: costo, prezzi e preventivi veterinari | ${siteConfig.name}`;
+const seoDescriptionServiceName = plainLanguageExplanation
+  ? `${seoServiceName.toLowerCase()}, cioe ${plainLanguageExplanation}`
+  : seoServiceName.toLowerCase();
+const description = locationLabel
+  ? `Trova cliniche veterinarie che offrono ${seoDescriptionServiceName} a ${locationLabel}. Confronta costo medio, prezzi indicativi, disponibilita e richiesta preventivo${serviceIsAnimalSpecific ? '.' : ' per cani, gatti e altri animali domestici.'}`
+  : `Trova cliniche veterinarie che offrono ${seoDescriptionServiceName}. Consulta costo medio, prezzi indicativi, disponibilita e richiesta preventivo${serviceIsAnimalSpecific ? '.' : ' per cani, gatti e altri animali domestici.'}`;
+const canonicalPath = locationParam
+  ? `/quanto-costa/${locationParam}/${serviceSlug}/cliniche`
+  : `/quanto-costa/${serviceSlug}/cliniche`;
+const canonical = `${siteConfig.url}${canonicalPath}`;
+const isPaginatedPage = requestedPage > 1;
+const pageHref = (page: number) => `${canonicalPath}${page > 1 ? `?page=${page}` : ''}`;
+const averagePrice = service?.average_price ? formatCurrency(service.average_price) : null;
+
+const itemListLd = {
+  '@context': 'https://schema.org',
+  '@type': 'CollectionPage',
+  name: title,
+  description,
+  url: canonical,
+  mainEntity: {
+    '@type': 'ItemList',
+    numberOfItems: clinicResults.length,
+    itemListElement: clinicResults.map((clinic: any, index: number) => ({
+      '@type': 'ListItem',
+      position: pageStart + index + 1,
+      item: {
+        '@type': ['VeterinaryCare', 'LocalBusiness'],
+        name: clinic.name,
+        url: `${siteConfig.url}/veterinari/${clinic.slug}`,
+        telephone: clinic.phone || undefined,
+        image: clinicImage(clinic) !== '/favicon.svg' ? clinicImage(clinic) : undefined,
+        priceRange: clinic.servicePrice?.price ? `€${Number(clinic.servicePrice.price).toFixed(0)}` : undefined,
+      },
+    })),
+  },
+};
+
+const breadcrumbLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: siteConfig.name, item: siteConfig.url },
+    { '@type': 'ListItem', position: 2, name: 'Quanto Costa?', item: `${siteConfig.url}/quanto-costa` },
+    { '@type': 'ListItem', position: 3, name: seoServiceName, item: `${siteConfig.url}/quanto-costa/${serviceSlug}` },
+    { '@type': 'ListItem', position: 4, name: 'Cliniche', item: canonical },
+  ],
+};
+---
+
+<BaseLayout title={title} description={description} canonical={canonical} jsonLd={[itemListLd, breadcrumbLd]} noindex={isPaginatedPage}>
+  <div class="flex min-h-screen flex-col bg-gray-50">
+    <section class="order-1 bg-gradient-to-r from-indigo-600 to-purple-600 py-10 text-white sm:py-12">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <nav class="mb-6 flex flex-wrap items-center gap-2 text-sm text-indigo-100" aria-label="Breadcrumb">
+          <a href="/" class="hover:text-white">Home</a>
+          <span>/</span>
+          <a href="/quanto-costa" class="hover:text-white">Quanto Costa?</a>
+          <span>/</span>
+          <a href={`/quanto-costa/${serviceSlug}`} class="hover:text-white">{serviceName}</a>
+          <span>/</span>
+          <span class="font-medium text-white">Cliniche</span>
+        </nav>
+        <a href="/quanto-costa" class="mb-6 inline-flex items-center rounded-md border border-white/40 px-3 py-2 text-sm font-semibold hover:bg-white/10">
+          <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
+          Torna a Quanto Costa
+        </a>
+        <h1 class="max-w-4xl break-words text-3xl font-bold leading-tight md:text-5xl">
+          Quanto costa {seoServiceName}{locationLabel ? ` a ${locationLabel}` : isGeoIpEstimatedListing ? ' vicino a te' : ''}
+        </h1>
+        {!serviceIsAnimalSpecific && (
+          <p class="mt-3 max-w-3xl text-base font-medium text-indigo-100">
+            Prestazione veterinaria dedicata a cani, gatti e altri animali domestici.
+          </p>
+        )}
+        <div class="mt-4 max-w-3xl space-y-1 text-lg leading-7 text-indigo-100">
+          <p>
+            {exactClinics.length > 0
+              ? `${exactClinics.length} ${exactClinics.length === 1 ? 'clinica dichiara' : 'cliniche dichiarano'} questa prestazione.`
+              : 'Nessuna clinica ha ancora pubblicato questa prestazione su Veterinari.org.'}
+          </p>
+          {affineClinics.length > 0 && (
+            <p>{affineClinics.length} {affineClinics.length === 1 ? 'clinica risulta associata a un servizio affine.' : 'cliniche risultano associate a servizi affini.'}</p>
+          )}
+          {possibleClinics.length > 0 && (
+            <p>{possibleClinics.length} {possibleClinics.length === 1 ? 'clinica in zona da contattare.' : 'cliniche in zona da contattare.'}</p>
+          )}
+          {averagePrice && <p>Prezzo medio indicativo: {averagePrice}.</p>}
+        </div>
+        {isGeoIpEstimatedListing && (
+          <p class="mt-3 max-w-3xl rounded-md border border-white/25 bg-white/10 px-4 py-3 text-sm leading-6 text-indigo-50">
+            Stiamo stimando la zona da Geo-IP{estimatedLocationLabel ? ` (${estimatedLocationLabel})` : ''}. Inserisci una localita precisa nel box qui sotto per risultati piu accurati.
+          </p>
+        )}
+        {orderedClinicResults.length > pageSize && (
+          <p class="mt-3 max-w-3xl text-sm text-indigo-100">
+            Mostriamo 10 risultati per pagina, ordinati per prezzo o prestazione dichiarata e poi per altre cliniche locali da contattare.
+          </p>
+        )}
+      </div>
+    </section>
+
+    <main class="order-2 mx-auto flex w-full max-w-7xl flex-col px-4 py-8 sm:px-6 lg:px-8">
+      {service && !locationParam && (
+        <section class="order-1 mb-6 rounded-lg border border-indigo-100 bg-white p-5 shadow">
+          <div class="grid gap-4 lg:grid-cols-[1fr_auto] lg:items-end">
+            <div>
+              <p class="text-xs font-bold uppercase tracking-wide text-indigo-600">Scegli la localita</p>
+              <h2 class="mt-2 text-xl font-bold text-gray-900">Dove vuoi cercare cliniche per {serviceName}?</h2>
+              <p class="mt-2 text-sm leading-6 text-gray-600">
+                La posizione automatica e solo indicativa. Inserisci comune o provincia per vedere risultati, mappa e contatti nella zona corretta.
+              </p>
+            </div>
+            <form class="flex w-full flex-col gap-2 sm:flex-row lg:min-w-[420px]" data-service-location-search data-service-slug={serviceSlug}>
+              <label class="sr-only" for="service-location-input">Localita</label>
+              <input
+                id="service-location-input"
+                name="location"
+                type="text"
+                placeholder="Es. Milano, Roma, Vergiate..."
+                class="min-h-11 flex-1 rounded-md border border-gray-300 px-3 py-2 text-sm text-gray-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100"
+              />
+              <button type="submit" class="inline-flex min-h-11 items-center justify-center rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+                Cerca nella zona
+              </button>
+            </form>
+          </div>
+        </section>
+      )}
+
+      {service && (
+        <section class={`order-1 mb-6 grid gap-4 ${quoteClinicCount > 0 ? 'lg:grid-cols-[1.05fr_0.95fr] lg:items-stretch' : ''}`}>
+          {quoteClinicCount > 0 && (
+            <div class="rounded-lg border border-indigo-200 bg-white p-5 shadow-lg ring-1 ring-indigo-50 sm:p-6">
+              <div class="flex items-start gap-3">
+                <span class="mt-1 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-indigo-50 text-indigo-700">
+                  <Mail className="h-5 w-5" aria-hidden="true" />
+                </span>
+                <div>
+                  <p class="text-xs font-bold uppercase tracking-wide text-indigo-600">Richiesta preventivo</p>
+                  <h2 class="mt-1 text-xl font-bold leading-tight text-gray-900 sm:text-2xl">
+                    {quoteHeading}
+                  </h2>
+                </div>
+              </div>
+              <p class="mt-4 text-base leading-7 text-gray-700">
+                Invia una richiesta tramite Veterinari.org {quoteClinicCount === 1 ? 'alla clinica con contatto disponibile' : `alle ${quoteClinicCount} cliniche con contatto disponibile`}. La struttura riceve i tuoi dati e puo risponderti direttamente con prezzo indicativo, disponibilita e tempi.
+              </p>
+              <button
+                type="button"
+                data-quote-open
+                data-quote-trigger="summary"
+                class="mt-5 inline-flex min-h-12 w-full items-center justify-center rounded-md bg-indigo-600 px-5 py-3 text-base font-bold text-white shadow-sm hover:bg-indigo-700"
+              >
+                Chiedi un preventivo per {serviceNameForCopy}
+              </button>
+              <p class="mt-3 text-sm leading-6 text-gray-500">
+                Disponibile per {quoteClinicCount} {quoteClinicCount === 1 ? 'clinica con email' : 'cliniche con email'}{locationLabel ? ` nella zona di ${locationLabel}` : ''}.
+              </p>
+              <a href={`/quanto-costa/${serviceSlug}`} class="mt-3 inline-flex w-full items-center justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                Leggi la guida alla prestazione
+              </a>
+            </div>
+          )}
+          <div class="hidden rounded-lg bg-white p-5 shadow md:block">
+            <h2 class="text-lg font-bold text-gray-900">Come usare questi risultati</h2>
+            <p class="mt-2 text-sm leading-6 text-gray-600">
+              Prima trovi le cliniche con prezzo o prestazione dichiarata. Poi i servizi affini e le altre strutture vicine da contattare.
+              {isGeoIpEstimatedListing && ` In questa pagina la zona e stimata tramite Geo-IP: ${estimatedLocationLabel || 'vicino a te'}.`}
+              {hasExpandedArea && ` Poiche nel comune risultano solo ${cityOnlyResultCount} ${cityOnlyResultCount === 1 ? 'struttura' : 'strutture'}, la ricerca e stata allargata alla provincia.`}
+            </p>
+            <div class="mt-4 flex flex-wrap gap-2 text-xs font-semibold">
+              <span class="rounded-full bg-indigo-50 px-3 py-1 text-indigo-700">Prezzo pubblicato</span>
+              <span class="rounded-full bg-green-50 px-3 py-1 text-green-700">Prestazione dichiarata</span>
+              <span class="rounded-full bg-blue-50 px-3 py-1 text-blue-700">Servizi affini</span>
+              <span class="rounded-full bg-amber-50 px-3 py-1 text-amber-700">Disponibilita da confermare</span>
+            </div>
+          </div>
+        </section>
+      )}
+
+      {!service && (
+        <div class="order-1 rounded-lg bg-white p-8 text-center shadow lg:order-none">
+          <Search className="mx-auto mb-3 h-8 w-8 text-gray-400" aria-hidden="true" />
+          <h2 class="text-xl font-bold text-gray-900">Prestazione non trovata</h2>
+          <p class="mt-2 text-gray-600">Il servizio richiesto non e presente nella tassonomia prezzi.</p>
+        </div>
+      )}
+
+      {service && clinicResults.length === 0 && (
+        <div class="order-1 grid gap-6 lg:order-none lg:grid-cols-[1.2fr_0.8fr]">
+          <div class="rounded-lg bg-white p-8 text-center shadow">
+            <MapPin className="mx-auto mb-3 h-8 w-8 text-gray-400" aria-hidden="true" />
+            <h2 class="text-xl font-bold text-gray-900">Nessuna clinica trovata</h2>
+            <p class="mt-2 text-gray-600">
+              Non risultano cliniche nella zona per questa prestazione{locationLabel ? ` a ${locationLabel}` : ''}. Prova una localita vicina o invia una richiesta di preventivo.
+            </p>
+            <a href={`/quanto-costa/${serviceSlug}`} class="mt-4 inline-flex rounded-md bg-indigo-600 px-4 py-2 text-sm font-semibold text-white hover:bg-indigo-700">
+              Leggi la descrizione della prestazione
+            </a>
+          </div>
+          <aside class="rounded-lg border border-green-200 bg-white p-6 shadow">
+            <h2 class="text-xl font-bold text-gray-900">Sei un veterinario e fornisci questo servizio?</h2>
+            <p class="mt-3 text-sm leading-6 text-gray-600">
+              Registrati, reclama la tua scheda e aggiorna le prestazioni offerte dalla tua struttura.
+            </p>
+            <a href="/claim" class="mt-5 inline-flex w-full items-center justify-center rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700">
+              Registrati e aggiorna la scheda
+            </a>
+          </aside>
+        </div>
+      )}
+
+      {service && clinicResults.length > 0 && (
+        <div class="order-3 flex flex-col">
+          <section class="order-1 mb-6 overflow-hidden rounded-lg bg-white shadow">
+            <div class="grid gap-0 lg:grid-cols-[0.9fr_1.1fr]">
+              <div class="p-5 lg:p-6">
+                <p class="text-xs font-bold uppercase tracking-wide text-indigo-600">Mappa e risultati</p>
+                <h2 class="mt-2 text-xl font-bold text-gray-900">
+                  Cliniche veterinarie per {seoServiceName}{locationLabel ? ` a ${locationLabel}` : ''}
+                </h2>
+                <p class="mt-2 text-sm leading-6 text-gray-600">
+                  I marker verdi indicano cliniche con prezzo o prestazione richiesta dichiarata. Le altre strutture possono offrire servizi affini: contattale per confermare prestazione, disponibilita e prezzo.
+                </p>
+                <div class="mt-4 hidden gap-2 text-sm text-gray-700 sm:grid sm:grid-cols-2 lg:grid-cols-4">
+                  <div class="rounded-md bg-indigo-50 px-3 py-2">
+                    <strong class="block text-indigo-700">{exactClinics.length}</strong>
+                    con prezzo o servizio richiesto
+                  </div>
+                  <div class="rounded-md bg-blue-50 px-3 py-2">
+                    <strong class="block text-blue-700">{affineClinics.length}</strong>
+                    servizi affini
+                  </div>
+                  <div class="rounded-md bg-amber-50 px-3 py-2">
+                    <strong class="block text-amber-700">{possibleClinics.length}</strong>
+                    da contattare
+                  </div>
+                  <div class="rounded-md bg-slate-50 px-3 py-2">
+                    <strong class="block text-slate-900">{showingFrom}-{showingTo}</strong>
+                    di {orderedClinicResults.length}
+                  </div>
+                </div>
+                <p class="mt-4 hidden text-xs leading-5 text-gray-500 sm:block">
+                  Le tariffe sono indicative e possono variare. Apri una scheda o usa il pulsante Preventivo per inviare una richiesta mediata da Veterinari.org.
+                </p>
+              </div>
+              <div class="h-[320px] min-w-0 border-t border-gray-100 lg:h-[420px] lg:border-l lg:border-t-0">
+                <ServiceClinicsMap
+                  client:load
+                  clinics={mapClinicResults}
+                  locationLabel={locationLabel}
+                  serviceName={serviceName}
+                />
+              </div>
+            </div>
+          </section>
+
+          <div class="order-2 mb-4 flex flex-col gap-2 rounded-lg bg-white p-4 shadow sm:flex-row sm:items-center sm:justify-between">
+            <div>
+              <h2 class="text-lg font-bold text-gray-900">Risultati ordinati per utilita</h2>
+              <p class="mt-1 text-sm text-gray-600">
+                Prima prezzo pubblicato e prestazione richiesta, poi servizi affini e infine altre cliniche locali da contattare senza impegno.
+              </p>
+            </div>
+            <span class="text-sm font-semibold text-gray-700">Pagina {safeCurrentPage} di {totalPages}</span>
+          </div>
+
+          <div id="clinic-results-grid" class="order-3 grid grid-cols-1 gap-6 md:grid-cols-2 lg:grid-cols-3">
+            {clinicResults.map((clinic: any) => (
+              <div class="relative">
+                <div class={`absolute left-4 top-4 z-10 rounded-full bg-white/95 px-3 py-1 text-sm font-bold shadow ${clinic.resultType === 'possible' ? 'text-amber-700' : clinic.resultType === 'related' ? 'text-blue-700' : clinic.resultType === 'declared' ? 'text-green-700' : 'text-indigo-700'}`}>
+                  {clinic.servicePrice?.price ? formatCurrency(clinic.servicePrice.price) : clinic.resultLabel}
+                  {clinic.servicePrice?.animal_type && <span class="ml-1 text-xs font-medium text-gray-500">({clinic.servicePrice.animal_type})</span>}
+                </div>
+                <ClinicCard clinic={clinic} />
+                <div class="mt-[-1rem] rounded-b-lg bg-white px-5 pb-5 shadow-lg">
+                  <p class="border-t border-gray-100 pt-3 text-sm leading-6 text-gray-600">{clinic.resultDescription}</p>
+                  <div class="mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {clinic.phone && (
+                      <a href={`tel:${cleanText(clinic.phone).replace(/\s/g, '')}`} data-clinic-id={String(clinic.id)} class="inline-flex items-center justify-center rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700">
+                        Chiama
+                      </a>
+                    )}
+                    {clinic.email && (
+                      <button
+                        type="button"
+                        data-quote-open
+                        data-quote-trigger="clinic-card"
+                        data-quote-clinic-id={String(clinic.id)}
+                        data-quote-clinic-name={cleanText(clinic.name)}
+                        class="inline-flex items-center justify-center rounded-md border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50"
+                      >
+                        Preventivo
+                      </button>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {totalPages > 1 && (
+            <nav class="order-4 mt-8 flex flex-wrap items-center justify-center gap-2" aria-label="Paginazione risultati">
+              {safeCurrentPage > 1 && (
+                <a href={pageHref(safeCurrentPage - 1)} rel={safeCurrentPage - 1 > 1 ? 'nofollow' : undefined} class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                  Precedente
+                </a>
+              )}
+              {Array.from({ length: totalPages }).slice(0, 7).map((_, index) => {
+                const page = index + 1;
+                return (
+                  <a
+                    href={pageHref(page)}
+                    rel={page > 1 ? 'nofollow' : undefined}
+                    class={`inline-flex h-10 w-10 items-center justify-center rounded-md text-sm font-bold ${page === safeCurrentPage ? 'bg-indigo-600 text-white' : 'border border-gray-300 bg-white text-gray-700 hover:bg-gray-50'}`}
+                    aria-current={page === safeCurrentPage ? 'page' : undefined}
+                  >
+                    {page}
+                  </a>
+                );
+              })}
+              {totalPages > 7 && <span class="px-2 text-sm text-gray-500">...</span>}
+              {safeCurrentPage < totalPages && (
+                <a href={pageHref(safeCurrentPage + 1)} rel="nofollow" class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                  Successiva
+                </a>
+              )}
+            </nav>
+          )}
+
+          {exactClinics.length === 0 && (
+            <section class="order-5 mt-8 rounded-lg border border-green-200 bg-white p-6 shadow">
+              <div class="grid gap-4 md:grid-cols-[1fr_auto] md:items-center">
+                <div>
+                  <h2 class="text-xl font-bold text-gray-900">Sei un veterinario e fornisci questo servizio?</h2>
+                  <p class="mt-2 text-sm leading-6 text-gray-600">
+                    Registrati, reclama la tua scheda e aggiorna le prestazioni offerte dalla tua struttura.
+                  </p>
+                </div>
+                <a href="/claim" class="inline-flex items-center justify-center rounded-md bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700">
+                  Registrati e aggiorna la scheda
+                </a>
+              </div>
+            </section>
+          )}
+
+          {(nearbyLocationLinks.length > 0 || relatedServiceLinks.length > 0) && (
+            <section class="order-6 mt-10 grid gap-6 lg:grid-cols-2">
+              {nearbyLocationLinks.length > 0 && (
+                <div class="rounded-lg bg-white p-5 shadow">
+                  <h2 class="text-lg font-bold text-gray-900">Stessa prestazione in localita vicine</h2>
+                  <div class="mt-4 flex flex-wrap gap-2">
+                    {nearbyLocationLinks.map((link) => (
+                      <a href={link.href} class="rounded-full border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">
+                        {link.label}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {relatedServiceLinks.length > 0 && (
+                <div class="rounded-lg bg-white p-5 shadow">
+                  <h2 class="text-lg font-bold text-gray-900">Altre prestazioni nella stessa localita</h2>
+                  <div class="mt-4 flex flex-wrap gap-2">
+                    {relatedServiceLinks.map((link) => (
+                      <a href={link.href} class="rounded-full border border-slate-200 px-3 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50">
+                        {link.label}
+                      </a>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
+          )}
+        </div>
+      )}
+    </main>
+
+    {service && quoteClinicCount > 0 && (
+      <div id="quote-sticky" class="fixed inset-x-0 bottom-0 z-40 hidden border-t border-indigo-100 bg-white/95 px-4 py-3 shadow-[0_-10px_30px_rgba(15,23,42,0.12)] backdrop-blur md:hidden">
+        <button type="button" data-quote-open data-quote-trigger="sticky-mobile" class="inline-flex min-h-12 w-full items-center justify-center rounded-md bg-indigo-600 px-4 py-3 text-base font-bold text-white shadow-sm">
+          Chiedi un preventivo
+        </button>
+      </div>
+    )}
+
+    {service && quoteClinicCount > 0 && (
+      <div id="quote-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+        <div class="absolute inset-0 bg-gray-950/60" data-quote-close></div>
+        <div class="relative mx-auto flex h-[100svh] w-full max-w-2xl items-end p-0 sm:min-h-screen sm:items-center sm:p-4">
+          <div class="flex h-[92svh] max-h-[92svh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:h-auto sm:max-h-[92vh] sm:rounded-lg">
+            <div class="shrink-0 border-b border-gray-100">
+              <div class="flex items-start justify-between gap-4">
+              <div class="p-5 pb-0 sm:p-6 sm:pb-0">
+                <p class="text-xs font-bold uppercase tracking-wide text-indigo-600">Richiesta preventivo</p>
+                <h2 class="mt-1 text-xl font-bold text-gray-900">Contatta le cliniche disponibili</h2>
+                <p class="mt-2 text-sm leading-6 text-gray-600">
+                  La richiesta viene inviata via email alle cliniche disponibili in questa ricerca.
+                </p>
+              </div>
+              <button type="button" data-quote-close class="mr-5 mt-5 shrink-0 rounded-md border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 sm:mr-6 sm:mt-6">
+                Chiudi
+              </button>
+              </div>
+            </div>
+
+            <form
+              class="flex min-h-0 flex-1 flex-col"
+              data-quote-form
+              data-quote-clinic-ids={JSON.stringify(quoteClinicIds)}
+              data-quote-clinic-options={JSON.stringify(quoteClinicOptions)}
+            >
+              <div class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6" style="-webkit-overflow-scrolling: touch;">
+              <input type="hidden" name="service_slug" value={serviceSlug} />
+              <input type="hidden" name="service_name" value={serviceName} />
+              <input type="hidden" name="location_label" value={estimatedLocationLabel || locationLabel} />
+              <input type="hidden" name="average_price" value={averagePrice || ''} />
+              <input type="hidden" name="source_path" value={canonicalPath} />
+              <input type="hidden" name="captcha_token" value={captchaToken} />
+              <input type="text" name="company" class="hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
+
+              <div data-quote-target class="hidden rounded-md border border-indigo-100 bg-indigo-50 p-3 text-sm leading-6 text-indigo-900"></div>
+
+              <label data-quote-extend-wrapper class="hidden gap-3 rounded-md border border-gray-200 bg-white p-3 text-sm leading-6 text-gray-700">
+                <input name="extend_to_all" type="checkbox" value="true" class="mt-1 h-5 w-5 shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                <span>Invia questa richiesta anche alle altre cliniche disponibili in questa ricerca.</span>
+              </label>
+
+              <div>
+                <label for="quote-name" class="text-sm font-semibold text-gray-900">Nome e cognome <span class="font-normal text-gray-500">(facoltativo)</span></label>
+                <input id="quote-name" name="name" type="text" autocomplete="name" class="mt-1 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" placeholder="Es. Mario Rossi" />
+              </div>
+
+              <div class="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <label for="quote-email" class="text-sm font-semibold text-gray-900">Email <span class="font-bold text-red-600">(obbligatoria)</span></label>
+                  <input id="quote-email" name="email" type="email" autocomplete="email" required class="mt-1 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" placeholder="nome@email.it" />
+                </div>
+                <div>
+                  <label for="quote-phone" class="text-sm font-semibold text-gray-900">Telefono <span class="font-normal text-gray-500">(facoltativo)</span></label>
+                  <input id="quote-phone" name="phone" type="tel" autocomplete="tel" class="mt-1 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" placeholder="+39..." />
+                </div>
+              </div>
+              <p class="text-xs leading-5 text-gray-500">Useremo l'email per inviare la richiesta alle cliniche e permettere loro di risponderti.</p>
+
+              <div>
+                <label for="quote-message" class="text-sm font-semibold text-gray-900">Richiesta</label>
+                <textarea id="quote-message" name="message" rows="4" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-base leading-6 text-gray-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100">{defaultQuoteMessage}</textarea>
+              </div>
+
+              <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+                <label for="quote-captcha" class="text-sm font-semibold text-gray-900">Verifica anti-spam: quanto fa {captchaA} + {captchaB}?</label>
+                <input id="quote-captcha" name="captcha_answer" type="number" inputmode="numeric" class="mt-2 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-indigo-500 focus:ring-2 focus:ring-indigo-100" />
+              </div>
+
+              <label class="flex gap-3 rounded-md border border-gray-200 bg-white p-3 text-sm leading-6 text-gray-700">
+                <input id="quote-privacy" name="privacy_accepted" type="checkbox" value="true" required class="mt-1 h-5 w-5 shrink-0 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500" />
+                <span>
+                  Ho letto l'informativa privacy e autorizzo Veterinari.org a inviare questa richiesta alle cliniche selezionate.
+                  <a href="/privacy-policy" target="_blank" class="font-semibold text-indigo-700 underline">Privacy policy</a>
+                </span>
+              </label>
+
+              <div data-quote-feedback class="hidden rounded-md px-3 py-2 text-sm leading-6"></div>
+              </div>
+
+              <div class="shrink-0 border-t border-gray-100 bg-white p-4 shadow-[0_-10px_24px_rgba(15,23,42,0.08)] sm:p-6">
+                <button type="submit" class="inline-flex min-h-12 w-full items-center justify-center rounded-md bg-indigo-600 px-5 py-3 text-base font-bold text-white hover:bg-indigo-700 disabled:cursor-wait disabled:bg-indigo-300">
+                  Invia richiesta
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    )}
+  </div>
+</BaseLayout>
+
+<script>
+  const slugifyLocationInput = (value: string) => value
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .replace(/-{2,}/g, '-');
+
+  document.querySelectorAll<HTMLFormElement>('[data-service-location-search]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const serviceSlug = form.getAttribute('data-service-slug') || '';
+      const input = form.querySelector<HTMLInputElement>('input[name="location"]');
+      const locationSlug = slugifyLocationInput(input?.value || '');
+      if (!serviceSlug || !locationSlug) {
+        input?.focus();
+        return;
+      }
+      window.location.href = `/quanto-costa/${locationSlug}/${serviceSlug}/cliniche`;
+    });
+  });
+
+  const quoteModal = document.getElementById('quote-modal');
+  const quoteSticky = document.getElementById('quote-sticky');
+  const quoteForm = document.querySelector<HTMLFormElement>('[data-quote-form]');
+  const quoteFeedback = document.querySelector<HTMLElement>('[data-quote-feedback]');
+  const quoteTarget = document.querySelector<HTMLElement>('[data-quote-target]');
+  const quoteExtendWrapper = document.querySelector<HTMLElement>('[data-quote-extend-wrapper]');
+  const quoteExtendCheckbox = quoteExtendWrapper?.querySelector<HTMLInputElement>('input[name="extend_to_all"]');
+  const parseQuoteJson = (value: string | null) => {
+    try {
+      return JSON.parse(value || '[]');
+    } catch {
+      return [];
+    }
+  };
+  const allQuoteClinicIds = parseQuoteJson(quoteForm?.getAttribute('data-quote-clinic-ids') || '[]') as string[];
+  const quoteClinicOptions = parseQuoteJson(quoteForm?.getAttribute('data-quote-clinic-options') || '[]') as Array<{ id: string; name?: string; resultType?: string; resultLabel?: string }>;
+
+  const trackQuoteOpen = (trigger: HTMLElement | null, clinicId: string, clinicIds: string[]) => {
+    const serviceSlug = quoteForm?.querySelector<HTMLInputElement>('input[name="service_slug"]')?.value || '';
+    const serviceName = quoteForm?.querySelector<HTMLInputElement>('input[name="service_name"]')?.value || '';
+    const locationLabel = quoteForm?.querySelector<HTMLInputElement>('input[name="location_label"]')?.value || '';
+    const selectedClinicCount = Array.isArray(clinicIds) ? clinicIds.length : 0;
+    const triggerName = trigger?.getAttribute('data-quote-trigger') || (clinicId ? 'clinic-card' : 'summary');
+
+    if (typeof (window as any).gtag === 'function') {
+      (window as any).gtag('event', 'quote_request_open', {
+        service_slug: serviceSlug,
+        service_name: serviceName,
+        location_label: locationLabel,
+        selected_clinic_count: selectedClinicCount,
+        selected_clinic_id: clinicId,
+        trigger: triggerName,
+        page_path: window.location.pathname,
+      });
+    }
+
+    fetch('/api/quote-funnel-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      keepalive: true,
+      body: JSON.stringify({
+        event_type: 'quote_request_open',
+        service_slug: serviceSlug,
+        service_name: serviceName,
+        location_label: locationLabel,
+        selected_clinic_count: selectedClinicCount,
+        selected_clinic_id: clinicId,
+        trigger: triggerName,
+        page_path: window.location.pathname,
+        page_location: window.location.href,
+      }),
+    }).catch(() => null);
+  };
+
+  const showQuoteFeedback = (message: string, type: 'success' | 'error' = 'success') => {
+    if (!quoteFeedback) return;
+    quoteFeedback.textContent = message;
+    quoteFeedback.classList.remove('hidden', 'bg-green-50', 'text-green-800', 'bg-red-50', 'text-red-800');
+    quoteFeedback.classList.add(type === 'success' ? 'bg-green-50' : 'bg-red-50', type === 'success' ? 'text-green-800' : 'text-red-800');
+  };
+
+  const openQuoteModal = (event?: Event) => {
+    if (!quoteModal) return;
+    const trigger = event?.currentTarget as HTMLElement | null;
+    const clinicId = trigger?.getAttribute('data-quote-clinic-id') || '';
+    const clinicName = trigger?.getAttribute('data-quote-clinic-name') || '';
+    const selectedClinicIds = clinicId ? [clinicId] : allQuoteClinicIds;
+    if (quoteForm) {
+      quoteForm.setAttribute('data-selected-clinic-ids', JSON.stringify(selectedClinicIds));
+      quoteForm.setAttribute('data-selected-clinic-name', clinicName);
+    }
+    if (quoteTarget) {
+      quoteTarget.classList.toggle('hidden', !clinicId);
+      quoteTarget.textContent = clinicId
+        ? `Stai chiedendo il preventivo a: ${clinicName || 'questa clinica'}.`
+        : `La richiesta sara inviata alle ${allQuoteClinicIds.length} cliniche disponibili in questa ricerca.`;
+    }
+    if (quoteExtendWrapper) {
+      quoteExtendWrapper.classList.toggle('hidden', !clinicId || allQuoteClinicIds.length <= 1);
+      quoteExtendWrapper.classList.toggle('flex', Boolean(clinicId && allQuoteClinicIds.length > 1));
+    }
+    if (quoteExtendCheckbox) quoteExtendCheckbox.checked = false;
+    quoteModal.classList.remove('hidden');
+    quoteModal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('overflow-hidden');
+    trackQuoteOpen(trigger, clinicId, selectedClinicIds);
+    quoteForm?.querySelector<HTMLInputElement>('input[name="name"]')?.focus();
+  };
+
+  const closeQuoteModal = () => {
+    if (!quoteModal) return;
+    quoteModal.classList.add('hidden');
+    quoteModal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('overflow-hidden');
+  };
+
+  document.querySelectorAll<HTMLElement>('[data-quote-open]').forEach((button) => {
+    button.addEventListener('click', openQuoteModal);
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-quote-close]').forEach((button) => {
+    button.addEventListener('click', closeQuoteModal);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeQuoteModal();
+  });
+
+  if (quoteForm) {
+    fetch('/api/local-auth?action=session', { credentials: 'same-origin' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => {
+        const sessionUser = payload?.session?.user;
+        if (!sessionUser) return;
+        const metadata = sessionUser.user_metadata || {};
+        const nameInput = quoteForm.querySelector<HTMLInputElement>('input[name="name"]');
+        const emailInput = quoteForm.querySelector<HTMLInputElement>('input[name="email"]');
+        const phoneInput = quoteForm.querySelector<HTMLInputElement>('input[name="phone"]');
+        if (nameInput && !nameInput.value) nameInput.value = metadata.full_name || '';
+        if (emailInput && !emailInput.value) emailInput.value = sessionUser.email || '';
+        if (phoneInput && !phoneInput.value) phoneInput.value = metadata.phone || '';
+      })
+      .catch(() => null);
+
+    quoteForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const submitButton = quoteForm.querySelector<HTMLButtonElement>('button[type="submit"]');
+      const formData = new FormData(quoteForm);
+      const selectedIdsRaw = quoteForm.getAttribute('data-selected-clinic-ids') || quoteForm.getAttribute('data-quote-clinic-ids') || '[]';
+      let clinicIds: string[] = [];
+      try {
+        clinicIds = JSON.parse(selectedIdsRaw);
+      } catch {
+        clinicIds = [];
+      }
+      if (formData.get('extend_to_all') === 'true') clinicIds = allQuoteClinicIds;
+      const requesterEmail = String(formData.get('email') || '').trim();
+      if (!requesterEmail || !requesterEmail.includes('@')) {
+        showQuoteFeedback('Inserisci una email valida: deve contenere almeno @.', 'error');
+        quoteForm.querySelector<HTMLInputElement>('input[name="email"]')?.focus();
+        return;
+      }
+      const clinicMatches = quoteClinicOptions
+        .filter((clinic) => clinicIds.includes(String(clinic.id)))
+        .map((clinic) => ({
+          id: String(clinic.id),
+          result_type: clinic.resultType || '',
+          result_label: clinic.resultLabel || '',
+        }));
+
+      submitButton?.setAttribute('disabled', 'true');
+      showQuoteFeedback('Invio richiesta in corso...', 'success');
+
+      try {
+        const response = await fetch('/api/quote-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            service_slug: formData.get('service_slug'),
+            service_name: formData.get('service_name'),
+            location_label: formData.get('location_label'),
+            average_price: formData.get('average_price'),
+            source_path: formData.get('source_path') || window.location.pathname,
+            clinic_ids: clinicIds,
+            clinic_matches: clinicMatches,
+            name: formData.get('name'),
+            email: formData.get('email'),
+            phone: formData.get('phone'),
+            message: formData.get('message'),
+            captcha_answer: formData.get('captcha_answer'),
+            captcha_token: formData.get('captcha_token'),
+            privacy_accepted: formData.get('privacy_accepted') === 'true',
+            company: formData.get('company'),
+          }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) {
+          throw new Error(result.error || 'Richiesta non inviata.');
+        }
+        if (typeof (window as any).gtag === 'function') {
+          (window as any).gtag('event', 'quote_request_submit', {
+            request_id: result.request_id || '',
+            service_slug: formData.get('service_slug') || '',
+            service_name: formData.get('service_name') || '',
+            location_label: formData.get('location_label') || '',
+            selected_clinic_count: Array.isArray(clinicIds) ? clinicIds.length : 0,
+            page_path: window.location.pathname,
+          });
+        }
+        showQuoteFeedback(
+          result.duplicate
+            ? (result.message || 'Richiesta gia inviata pochi minuti fa: non l abbiamo reinviata alle cliniche.')
+            : result.email_warning
+            ? 'Richiesta registrata. Stiamo completando la consegna email alle cliniche.'
+            : 'Richiesta inviata. Le cliniche con email potranno ricontattarti direttamente.',
+          'success'
+        );
+        quoteForm.reset();
+      } catch (error: any) {
+        showQuoteFeedback(error?.message || 'Errore durante l invio della richiesta.', 'error');
+      } finally {
+        submitButton?.removeAttribute('disabled');
+      }
+    });
+  }
+
+  const clinicGrid = document.getElementById('clinic-results-grid');
+  if (quoteSticky && clinicGrid) {
+    const toggleSticky = (visible: boolean) => {
+      quoteSticky.classList.toggle('hidden', !visible);
+    };
+    const observer = new IntersectionObserver((entries) => {
+      const firstEntry = entries[0];
+      toggleSticky(Boolean(firstEntry?.isIntersecting || window.scrollY > clinicGrid.offsetTop));
+    }, { threshold: 0.08 });
+    observer.observe(clinicGrid);
+  }
+</script>

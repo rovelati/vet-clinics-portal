@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import AdminIntegratoriApp from '@/components/react/AdminIntegratoriApp.jsx';
+import { siteConfig } from '@/config/site';
+---
+
+<BaseLayout
+  title={`CMS Integratori | ${siteConfig.name}`}
+  description="Gestione admin articoli integratori."
+  canonical={`${siteConfig.url}/admin-test/integratori`}
+  noindex={true}
+>
+  <AdminIntegratoriApp mode="list" client:load />
+</BaseLayout>

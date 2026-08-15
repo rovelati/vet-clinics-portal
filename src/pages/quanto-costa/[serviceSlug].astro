@@ -1,0 +1,7 @@
+---
+import ServiceDescriptionPage from '@/components/ServiceDescriptionPage.astro';
+
+const serviceSlug = Astro.params.serviceSlug || '';
+---
+
+<ServiceDescriptionPage serviceSlug={serviceSlug} />

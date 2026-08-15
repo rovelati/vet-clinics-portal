@@ -1,0 +1,175 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import CercaVeterinariApp from '@/components/react/CercaVeterinariApp.jsx';
+import { siteConfig } from '@/config/site';
+import { supabasePublicServer } from '@/lib/supabase';
+import { clinicImage } from '@/lib/clinics';
+import { canonicalH24CityPath, canonicalVeterinariCityPath, slugifyLocation } from '@/lib/seo-urls';
+
+interface Props {
+  cityName: string;
+  province: string;
+}
+
+const { cityName, province } = Astro.props;
+const provinceLabel = province.toUpperCase();
+const canonicalPath = canonicalVeterinariCityPath(cityName, provinceLabel);
+const canonical = `${siteConfig.url}${canonicalPath}`;
+const locationLabel = `${cityName}, ${provinceLabel}`;
+const localServiceLocation = `${slugifyLocation(cityName)}-${provinceLabel.toLowerCase()}`;
+const title = `Veterinari a ${locationLabel}: cliniche, ambulatori e mappa | ${siteConfig.name}`;
+const description = `Trova veterinari vicino a te a ${locationLabel}: cliniche, ambulatori e strutture veterinarie con indirizzo, telefono, recensioni, orari e mappa.`;
+const contextualLinks = [
+  {
+    href: canonicalH24CityPath(cityName, provinceLabel),
+    label: `Veterinari H24 a ${cityName}`,
+    description: 'Strutture aperte ora o disponibili 24 ore su 24.',
+  },
+  {
+    href: `/quanto-costa/${localServiceLocation}/ecografia-addominale/cliniche`,
+    label: `Ecografia addominale a ${cityName}`,
+    description: 'Cliniche e prezzi indicativi per questa prestazione.',
+  },
+  {
+    href: `/quanto-costa/${localServiceLocation}/sterilizzazione-cane-femmina/cliniche`,
+    label: `Sterilizzazione cane femmina a ${cityName}`,
+    description: 'Confronta strutture e disponibilita in zona.',
+  },
+  {
+    href: `/quanto-costa/${localServiceLocation}/vaccino-rabbia-valenza-triennale/cliniche`,
+    label: `Vaccino rabbia a ${cityName}`,
+    description: 'Trova cliniche che possono offrire il servizio.',
+  },
+];
+
+async function loadCityClinics() {
+  if (!supabasePublicServer) return [];
+
+  const { data, error } = await supabasePublicServer
+    .from('clinics')
+    .select(`
+      id, name, address, phone, slug,
+      rating_avg_cached, rating_count_cached,
+      lat, lng, hours, raw_import, gallery_images, created_at
+    `)
+    .in('status', ['pubblicata', 'in_revisione'])
+    .not('slug', 'is', null)
+    .or(`raw_import->>city.ilike.%${cityName.replace(/[%,]/g, ' ')}%,raw_import->>province.ilike.%${provinceLabel}%`)
+    .order('rating_avg_cached', { ascending: false, nullsFirst: false })
+    .order('rating_count_cached', { ascending: false, nullsFirst: false })
+    .limit(120);
+
+  if (error) {
+    console.error('Errore caricamento pagina veterinari citta:', error.message);
+    return [];
+  }
+
+  const cityNeedle = cityName.toLowerCase();
+  const provinceNeedle = provinceLabel.toUpperCase();
+  return (data ?? [])
+    .filter((clinic: any) => {
+      const clinicCity = typeof clinic.raw_import?.city === 'string' ? clinic.raw_import.city.replace(/"/g, '').trim().toLowerCase() : '';
+      const clinicProvince = typeof clinic.raw_import?.province === 'string' ? clinic.raw_import.province.replace(/"/g, '').trim().toUpperCase() : '';
+      return clinicCity === cityNeedle || clinicProvince === provinceNeedle;
+    })
+    .slice(0, 60);
+}
+
+const clinics = await loadCityClinics();
+const itemListElement = clinics.slice(0, 20).map((clinic: any, index: number) => {
+  const lat = Number(clinic.lat);
+  const lng = Number(clinic.lng);
+  return {
+    '@type': 'ListItem',
+    position: index + 1,
+    item: {
+      '@type': ['VeterinaryCare', 'LocalBusiness'],
+      name: clinic.name,
+      url: `${siteConfig.url}/veterinari/${clinic.slug}`,
+      telephone: clinic.phone || undefined,
+      address: clinic.address || undefined,
+      image: clinicImage(clinic),
+      geo: Number.isFinite(lat) && Number.isFinite(lng)
+        ? { '@type': 'GeoCoordinates', latitude: lat, longitude: lng }
+        : undefined,
+    },
+  };
+});
+
+const collectionLd = {
+  '@context': 'https://schema.org',
+  '@type': 'CollectionPage',
+  name: title,
+  description,
+  url: canonical,
+  isPartOf: {
+    '@type': 'WebSite',
+    name: siteConfig.name,
+    url: siteConfig.url,
+  },
+  mainEntity: {
+    '@type': 'ItemList',
+    name: `Veterinari a ${locationLabel}`,
+    numberOfItems: itemListElement.length,
+    itemListElement,
+  },
+};
+
+const breadcrumbLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: siteConfig.name, item: siteConfig.url },
+    { '@type': 'ListItem', position: 2, name: 'Veterinari', item: `${siteConfig.url}/cerca-veterinari` },
+    { '@type': 'ListItem', position: 3, name: provinceLabel, item: `${siteConfig.url}/cerca-veterinari?location=${encodeURIComponent(provinceLabel)}` },
+    { '@type': 'ListItem', position: 4, name: cityName, item: canonical },
+  ],
+};
+---
+
+<BaseLayout title={title} description={description} canonical={canonical} jsonLd={[collectionLd, breadcrumbLd]}>
+  <nav class="border-b border-gray-200 bg-white" aria-label="Breadcrumb">
+    <div class="mx-auto max-w-7xl px-4 py-3 text-sm sm:px-6 lg:px-8">
+      <ol class="flex flex-wrap items-center gap-2">
+        <li><a href="/" class="text-gray-500 hover:text-gray-700">Home</a></li>
+        <li class="text-gray-400">/</li>
+        <li><a href="/cerca-veterinari" class="text-gray-500 hover:text-gray-700">Veterinari</a></li>
+        <li class="text-gray-400">/</li>
+        <li class="font-medium text-gray-900">{locationLabel}</li>
+      </ol>
+    </div>
+  </nav>
+  <CercaVeterinariApp
+    client:load
+    initialClinics={clinics}
+    initialQuery="veterinari"
+    initialLocation={`${cityName}, ${provinceLabel}`}
+  />
+  <section class="mx-auto max-w-7xl px-4 pb-10 sm:px-6 lg:px-8" aria-labelledby="local-seo-links">
+    <div class="border-t border-gray-200 pt-6">
+      <section class="mb-6 rounded-lg border border-emerald-100 bg-white p-5 shadow-sm">
+        <h2 class="text-xl font-bold text-gray-900">Come scegliere un veterinario vicino a te a {cityName}</h2>
+        <p class="mt-2 text-sm leading-6 text-gray-600">
+          In questa pagina trovi cliniche, ambulatori e strutture veterinarie in zona. Controlla telefono, orari, distanza e recensioni; in caso di urgenza usa anche la ricerca H24 per trovare strutture aperte ora o reperibili.
+        </p>
+        <div class="mt-4 flex flex-wrap gap-2">
+          <a href={canonicalH24CityPath(cityName, provinceLabel)} class="rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">
+            Pronto soccorso veterinario H24 a {cityName}
+          </a>
+          <a href={`/quanto-costa/${localServiceLocation}/visita-veterinaria/cliniche`} class="rounded-full border border-green-200 px-4 py-2 text-sm font-semibold text-green-700 hover:bg-green-50">
+            Costo visita veterinaria a {cityName}
+          </a>
+        </div>
+      </section>
+      <h2 id="local-seo-links" class="text-base font-bold text-gray-900">Ricerche utili a {cityName}</h2>
+      <div class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        {contextualLinks.map((link) => (
+          <a href={link.href} class="rounded-lg border border-gray-200 bg-white p-4 transition hover:border-green-600 hover:bg-green-50">
+            <span class="block text-sm font-semibold text-gray-900">{link.label}</span>
+            <span class="mt-1 block text-xs leading-5 text-gray-600">{link.description}</span>
+          </a>
+        ))}
+      </div>
+    </div>
+  </section>
+</BaseLayout>

@@ -1,0 +1,2041 @@
+---
+import { createHmac } from 'node:crypto';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import ClinicCard from '@/components/ClinicCard.astro';
+import { siteConfig } from '@/config/site';
+import { supabaseAdmin, supabasePublicServer } from '@/lib/supabase';
+import { localDb, query as queryLocalDb } from '@/lib/local-db';
+import { selectBestClinicImage, type ClinicSummary } from '@/lib/clinics';
+import {
+  canonicalH24CityPath,
+  canonicalVeterinariCityPath,
+  canonicalVeterinariProvincePath,
+  canonicalVeterinariRegionPath,
+  provinceSlug,
+  slugifyLocation,
+} from '@/lib/seo-urls';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronRight,
+  Clock,
+  DollarSign,
+  Edit,
+  ExternalLink,
+  Globe,
+  Heart,
+  MapPin,
+  MessageCircle,
+  MessageSquare,
+  Navigation,
+  Phone,
+  Star,
+  Stethoscope,
+  Wallet,
+} from 'lucide-react';
+
+const rawSlugParam = Astro.params.slug;
+const slug = decodeURIComponent(Array.isArray(rawSlugParam) ? rawSlugParam.join('/') : String(rawSlugParam || ''))
+  .split('/')
+  .filter(Boolean)
+  .pop()
+  ?.trim();
+if (!slug) {
+  return Astro.redirect('/cerca-veterinari');
+}
+
+const clinicRedirects: Record<string, string> = {
+  'clinica-veterinaria-arcella-padova': 'anicura-padova',
+};
+
+if (clinicRedirects[slug]) {
+  return Astro.redirect(`/veterinari/${clinicRedirects[slug]}`, 301);
+}
+
+if (localDb) {
+  const redirectResult = await queryLocalDb(
+    `SELECT status::text AS status,
+            raw_import->>'redirect_to_slug' AS redirect_to_slug,
+            raw_import->>'canonical_slug' AS canonical_slug,
+            raw_import->>'merged_into_slug' AS merged_into_slug
+     FROM public.clinics
+     WHERE slug = $1
+     LIMIT 1`,
+    [slug],
+  );
+  const redirectClinic = redirectResult.rows[0];
+  const databaseRedirectSlug = cleanText(
+    redirectClinic?.redirect_to_slug || redirectClinic?.canonical_slug || redirectClinic?.merged_into_slug,
+  );
+  if (
+    redirectClinic
+    && ['rimossa', 'non_approvata'].includes(String(redirectClinic.status))
+    && databaseRedirectSlug
+    && databaseRedirectSlug !== slug
+  ) {
+    return Astro.redirect(`/veterinari/${databaseRedirectSlug}`, 301);
+  }
+}
+
+const sentimentConfig = [
+  { key: 'empathy', label: 'Empatia & cura del pet', Icon: Heart },
+  { key: 'pricing', label: 'Prezzo & trasparenza', Icon: Wallet },
+  { key: 'clinical_outcome', label: 'Efficacia clinica', Icon: Stethoscope },
+  { key: 'access', label: 'Tempi & accessibilità', Icon: Clock },
+  { key: 'communication', label: 'Comunicazione & follow-up', Icon: MessageCircle },
+];
+
+const fallbackServiceSeoLinks = [
+  'Ecografia addominale',
+  'Radiografia singola',
+  'Test giardia',
+  'Esame citologico',
+  'Analisi complete (ematochimico + elettroforesi)',
+  'Ecocardiogramma cane',
+];
+
+const IT_DAYS = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+const DISPLAY_DAYS = ['Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato', 'Domenica'];
+const dayLabels: Record<string, string> = {
+  monday: 'Lunedì',
+  tuesday: 'Martedì',
+  wednesday: 'Mercoledì',
+  thursday: 'Giovedì',
+  friday: 'Venerdì',
+  saturday: 'Sabato',
+  sunday: 'Domenica',
+  lunedi: 'Lunedì',
+  lunedì: 'Lunedì',
+  martedi: 'Martedì',
+  martedì: 'Martedì',
+  mercoledi: 'Mercoledì',
+  mercoledì: 'Mercoledì',
+  giovedi: 'Giovedì',
+  giovedì: 'Giovedì',
+  venerdi: 'Venerdì',
+  venerdì: 'Venerdì',
+  sabato: 'Sabato',
+  domenica: 'Domenica',
+};
+
+function stripHtml(value = '') {
+  return String(value).replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+}
+
+function cleanText(value: unknown) {
+  return typeof value === 'string' ? value.replace(/"/g, '').trim() : '';
+}
+
+function cityLabel(rawImport: Record<string, unknown> | null | undefined) {
+  const city = cleanText(rawImport?.city);
+  const province = cleanText(rawImport?.province);
+  if (city && province) return `${city}, ${province}`;
+  return city || province || '';
+}
+
+function toMoney(value: unknown) {
+  const numeric = Number(value);
+  if (!Number.isFinite(numeric)) return '';
+  return new Intl.NumberFormat('it-IT', { style: 'currency', currency: 'EUR' }).format(numeric);
+}
+
+function formatDate(value: unknown) {
+  if (!value) return '';
+  const date = new Date(String(value));
+  if (Number.isNaN(date.getTime())) return '';
+  return new Intl.DateTimeFormat('it-IT', { day: 'numeric', month: 'long', year: 'numeric' }).format(date);
+}
+
+function normalizeWebsite(value: unknown) {
+  const website = cleanText(value);
+  if (!website) return '';
+  return /^https?:\/\//i.test(website) ? website : `https://${website}`;
+}
+
+function normalizePhone(value: unknown) {
+  return cleanText(value).replace(/\s+/g, '');
+}
+
+function googlePlaceId(rawImport: Record<string, any>) {
+  return cleanText(rawImport?.gmb?.place_id || rawImport?.place_id || rawImport?.google_place_id);
+}
+
+function googleCid(rawImport: Record<string, any>) {
+  const directCid = cleanText(rawImport?.gmb?.cid || rawImport?.cid || rawImport?.google_cid);
+  if (directCid) return directCid;
+  const mapsUrl = cleanText(rawImport?.gmb?.maps_url || rawImport?.maps_url);
+  const match = mapsUrl.match(/[?&]cid=(\d+)/);
+  return match?.[1] || '';
+}
+
+function normalizeHours(hours: unknown) {
+  if (!hours || typeof hours !== 'object' || Array.isArray(hours)) return [];
+  const items = Object.entries(hours as Record<string, unknown>)
+    .map(([key, value]) => ({
+      day: dayLabels[key.toLowerCase()] || key,
+      time: Array.isArray(value) ? value.join(', ') : String(value || '').trim(),
+    }))
+    .filter((item) => item.time && item.time !== 'null' && item.time !== 'undefined');
+  const byDay = new Map(items.map((item) => [item.day, item]));
+  const orderedDays = DISPLAY_DAYS
+    .map((day) => byDay.get(day))
+    .filter(Boolean);
+  const extraDays = items.filter((item) => !DISPLAY_DAYS.includes(item.day));
+  return [...orderedDays, ...extraDays];
+}
+
+function normalizeHoursMap(hours: unknown) {
+  const map = new Map<string, string>();
+  for (const item of normalizeHours(hours)) map.set(item.day, item.time);
+  return map;
+}
+
+function parseIntervals(label: unknown) {
+  const value = String(label || '').toLowerCase().trim();
+  if (!value || value.includes('chiuso') || value.includes('appuntament')) return [];
+  if (value === 'h24' || value === '24 ore' || value === '24h' || value.includes('h24') || (value.includes('24') && !value.includes(':'))) {
+    return [[0, 24 * 60]];
+  }
+
+  return String(label || '')
+    .split(',')
+    .map((part) => part.match(/(\d{1,2}):?(\d{2})?\s*-\s*(\d{1,2}):?(\d{2})?/))
+    .filter(Boolean)
+    .map((match: RegExpMatchArray) => {
+      const start = Number(match[1]) * 60 + Number(match[2] || 0);
+      const end = Number(match[3]) * 60 + Number(match[4] || 0);
+      return end > start ? [start, end] : null;
+    })
+    .filter(Boolean) as number[][];
+}
+
+function computeOpenState(hours: unknown, date = new Date()) {
+  const hoursMap = normalizeHoursMap(hours);
+  const today = IT_DAYS[date.getDay()];
+  const todayIntervals = parseIntervals(hoursMap.get(today));
+  const nowMinutes = date.getHours() * 60 + date.getMinutes();
+
+  for (const [start, end] of todayIntervals) {
+    if (nowMinutes >= start && nowMinutes < end) {
+      const close = `${String(Math.floor(end / 60)).padStart(2, '0')}:${String(end % 60).padStart(2, '0')}`;
+      return {
+        state: 'open',
+        color: 'bg-green-600',
+        message: `${new Intl.DateTimeFormat('it-IT', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(date)} – Aperto`,
+        extra: `Chiude alle ${close}`,
+      };
+    }
+  }
+
+  for (let offset = 0; offset <= 6; offset += 1) {
+    const day = IT_DAYS[(date.getDay() + offset) % 7];
+    const intervals = parseIntervals(hoursMap.get(day));
+    const next = intervals.find(([start]) => offset > 0 || start > nowMinutes);
+    if (next) {
+      const open = `${String(Math.floor(next[0] / 60)).padStart(2, '0')}:${String(next[0] % 60).padStart(2, '0')}`;
+      return {
+        state: 'closed',
+        color: 'bg-amber-500',
+        message: `${new Intl.DateTimeFormat('it-IT', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(date)} – Chiuso`,
+        extra: `Apre ${offset === 0 ? 'oggi' : `il ${day.toLowerCase()}`} alle ${open}`,
+      };
+    }
+  }
+
+  return {
+    state: 'unknown',
+    color: 'bg-amber-500',
+    message: `${new Intl.DateTimeFormat('it-IT', { weekday: 'long', day: 'numeric', month: 'long', hour: '2-digit', minute: '2-digit' }).format(date)} – Orari non disponibili`,
+    extra: 'Controlla telefonicamente.',
+  };
+}
+
+function resolveIsH24(hours: unknown, servicesList: Array<{ name: string }> = []) {
+  const hoursText = JSON.stringify(hours || {}).toLowerCase();
+  if (hoursText.includes('24') || hoursText.includes('sempre aperto')) return true;
+  return servicesList.some((service) => /h24|24 ore|pronto soccorso|emergenz/i.test(service.name));
+}
+
+function serviceName(service: any) {
+  return cleanText(service?.service_name || service?.name || service) || 'Servizio';
+}
+
+function serviceSlug(value: unknown) {
+  return slugifyLocation(value);
+}
+
+function reviewName(review: any) {
+  return cleanText(review?.reviewer_name || review?.author_name) || 'Utente Google';
+}
+
+function reviewBody(review: any) {
+  return cleanText(review?.comment || review?.text || review?.review_text);
+}
+
+function reviewRating(review: any) {
+  const value = Number(review?.star_rating ?? review?.rating);
+  return Number.isFinite(value) && value >= 1 && value <= 5 ? value : null;
+}
+
+function starText(value: unknown) {
+  const rating = Math.max(0, Math.min(5, Math.round(Number(value) || 0)));
+  return '★'.repeat(rating) + '☆'.repeat(5 - rating);
+}
+
+function sentimentBadgeClass(label: unknown) {
+  const normalized = cleanText(label).toLowerCase();
+  if (normalized === 'positive') return 'bg-green-100 text-green-700';
+  if (normalized === 'negative') return 'bg-red-100 text-red-700';
+  return 'bg-amber-100 text-amber-700';
+}
+
+function sentimentLabel(label: unknown) {
+  const normalized = cleanText(label).toLowerCase();
+  if (normalized === 'positive') return 'Positive';
+  if (normalized === 'negative') return 'Negative';
+  if (normalized === 'neutral') return 'Neutral';
+  return 'In analisi';
+}
+
+function shortText(value: unknown, maxLength = 145) {
+  const text = cleanText(value);
+  if (!text || text.length <= maxLength) return text;
+  const sliced = text.slice(0, maxLength).replace(/\s+\S*$/, '').trim();
+  return `${sliced}...`;
+}
+
+function mapEmbedUrl(lat: number, lng: number) {
+  const delta = 0.012;
+  const west = lng - delta;
+  const south = lat - delta;
+  const east = lng + delta;
+  const north = lat + delta;
+  return `https://www.openstreetmap.org/export/embed.html?bbox=${west}%2C${south}%2C${east}%2C${north}&layer=mapnik&marker=${lat}%2C${lng}`;
+}
+
+function googleDirectionsUrl(lat: number, lng: number) {
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat}%2C${lng}&travelmode=driving`;
+}
+
+let root: any = null;
+let rpcError: string | null = null;
+
+if (supabasePublicServer) {
+  const { data, error } = await supabasePublicServer.rpc('get_clinic_page', { p_slug: slug });
+  root = data?.get_clinic_page ?? data ?? null;
+  rpcError = error?.message ?? null;
+}
+
+const clinic = root?.clinic ?? null;
+
+if (!clinic) {
+  let removedClinic: any = null;
+  if (localDb) {
+    const result = await queryLocalDb(
+      'SELECT slug, status::text AS status, raw_import FROM public.clinics WHERE slug = $1 LIMIT 1',
+      [slug],
+    );
+    removedClinic = result.rows[0] || null;
+  } else if (supabaseAdmin) {
+    const { data } = await supabaseAdmin
+      .from('clinics')
+      .select('slug, status, raw_import')
+      .eq('slug', slug)
+      .maybeSingle();
+    removedClinic = data;
+  }
+
+  if (removedClinic) {
+    const removedRawImport = removedClinic?.raw_import || {};
+    const removedRedirectToSlug = cleanText(
+      removedRawImport.redirect_to_slug || removedRawImport.canonical_slug || removedRawImport.merged_into_slug,
+    );
+    if (
+      removedClinic
+      && ['rimossa', 'non_approvata'].includes(String(removedClinic.status))
+      && removedRedirectToSlug
+      && removedRedirectToSlug !== slug
+    ) {
+      return Astro.redirect(`/veterinari/${removedRedirectToSlug}`, 301);
+    }
+  }
+  return Astro.rewrite('/404');
+}
+
+let rawImport = clinic.raw_import || {};
+const redirectToSlug = cleanText(rawImport.redirect_to_slug || rawImport.canonical_slug || rawImport.merged_into_slug);
+
+if (clinic.status === 'rimossa' || clinic.status === 'non_approvata') {
+  if (redirectToSlug && redirectToSlug !== slug) {
+    return Astro.redirect(`/veterinari/${redirectToSlug}`, 301);
+  }
+  return Astro.rewrite('/404');
+}
+
+if (
+  supabasePublicServer
+  && (
+    clinic.owner_id === undefined
+    || clinic.claimed_at === undefined
+    || clinic.fnovi_id === undefined
+    || clinic.direttore_sanitario === undefined
+    || clinic.pronto_soccorso_h24 === undefined
+    || clinic.reperibilita_h24 === undefined
+    || clinic.deepupdate_payload == null
+  )
+) {
+  const { data: verificationData } = await supabasePublicServer
+    .from('clinics')
+    .select('owner_id, claimed_at, fnovi_id, direttore_sanitario, pronto_soccorso_h24, reperibilita_h24, deepupdate_payload')
+    .eq('id', clinic.id)
+    .maybeSingle();
+  if (verificationData) {
+    clinic.owner_id = verificationData.owner_id;
+    clinic.claimed_at = verificationData.claimed_at;
+    clinic.fnovi_id = verificationData.fnovi_id;
+    clinic.direttore_sanitario = verificationData.direttore_sanitario;
+    clinic.pronto_soccorso_h24 = verificationData.pronto_soccorso_h24;
+    clinic.reperibilita_h24 = verificationData.reperibilita_h24;
+    clinic.deepupdate_payload = verificationData.deepupdate_payload;
+  }
+}
+
+let clinicGallery = Array.isArray(clinic.gallery_images) && clinic.gallery_images.length
+  ? clinic.gallery_images
+  : [];
+
+if (clinicGallery.length === 0 && supabasePublicServer) {
+  const { data: galleryFallback } = await supabasePublicServer
+    .from('clinics')
+    .select('gallery_images')
+    .eq('id', clinic.id)
+    .maybeSingle();
+  if (Array.isArray(galleryFallback?.gallery_images) && galleryFallback.gallery_images.length) {
+    clinicGallery = galleryFallback.gallery_images;
+    clinic.gallery_images = clinicGallery;
+  }
+}
+
+if (supabasePublicServer && !googlePlaceId(rawImport) && !googleCid(rawImport)) {
+  const { data: rawImportFallback } = await supabasePublicServer
+    .from('clinics')
+    .select('raw_import')
+    .eq('id', clinic.id)
+    .maybeSingle();
+  if (rawImportFallback?.raw_import && typeof rawImportFallback.raw_import === 'object') {
+    rawImport = { ...rawImport, ...rawImportFallback.raw_import };
+    clinic.raw_import = rawImport;
+  }
+}
+if (!rawImport?.fnovi_albo) {
+  if (localDb) {
+    const fnoviRawImportResult = await queryLocalDb(
+      'SELECT raw_import FROM public.clinics WHERE id = $1 LIMIT 1',
+      [clinic.id],
+    );
+    const fnoviRawImport = fnoviRawImportResult.rows[0]?.raw_import;
+    if (fnoviRawImport && typeof fnoviRawImport === 'object') {
+      rawImport = { ...rawImport, ...fnoviRawImport };
+      clinic.raw_import = rawImport;
+    }
+  } else if (supabasePublicServer) {
+    const { data: fnoviRawImportFallback } = await supabasePublicServer
+      .from('clinics')
+      .select('raw_import')
+      .eq('id', clinic.id)
+      .maybeSingle();
+    if (fnoviRawImportFallback?.raw_import && typeof fnoviRawImportFallback.raw_import === 'object') {
+      rawImport = { ...rawImport, ...fnoviRawImportFallback.raw_import };
+      clinic.raw_import = rawImport;
+    }
+  }
+}
+const gallery = clinicGallery.length ? clinicGallery : ['/favicon.svg'];
+const heroImage = selectBestClinicImage(gallery);
+const hasHeroPhoto = heroImage !== '/favicon.svg';
+const locationLabel = cityLabel(rawImport);
+const city = cleanText(rawImport.city);
+const province = cleanText(rawImport.province);
+const region = cleanText(rawImport.region);
+const website = normalizeWebsite(clinic.website);
+const detailPath = Astro.url.pathname;
+const petLoverRegisterUrl = `/register?type=proprietario&redirect=${encodeURIComponent(detailPath)}`;
+const petLoverLoginUrl = `/login?redirect=${encodeURIComponent(detailPath)}`;
+const lat = Number(clinic.lat);
+const lng = Number(clinic.lng);
+const hasPosition = Number.isFinite(lat) && Number.isFinite(lng);
+const servicesPayload = Array.isArray(root?.services) ? root.services : [];
+
+const servicesList = Array.from(
+  new Map(
+    servicesPayload
+      .map((service: any) => ({
+        name: serviceName(service),
+        category: cleanText(service?.service_category),
+      }))
+      .filter((service: any) => service.name)
+      .map((service: any) => [service.name, service])
+  ).values()
+) as Array<{ name: string; category: string }>;
+
+const priceList = servicesPayload
+  .filter((service: any) => service?.price !== null && service?.price !== undefined)
+  .map((service: any) => ({
+    id: service.service_id || `${serviceName(service)}-${service.price}`,
+    service: serviceName(service),
+    category: cleanText(service.service_category) || 'Altro',
+    price: Number(service.price),
+    animalType: cleanText(service.animal_type),
+    avgPrice: service.avg_price_from_taxonomy ? Number(service.avg_price_from_taxonomy) : null,
+  }))
+  .filter((item: any) => Number.isFinite(item.price));
+
+const pricesByCategory = priceList.reduce((acc: Record<string, typeof priceList>, item: any) => {
+  acc[item.category] ||= [];
+  acc[item.category].push(item);
+  return acc;
+}, {});
+const priceCategories = Object.keys(pricesByCategory).sort((a, b) => a.localeCompare(b, 'it'));
+
+const standardQuoteServiceNames = [
+  'Visita semplice',
+  'Visita a domicilio',
+  'Vaccinazione cane',
+  'Vaccinazione gatto',
+  'Microchip',
+  'Esame feci',
+  'Esame urine',
+  'Test giardia',
+  'Visita dermatologica',
+  'Visita ortopedica',
+];
+const equipmentHeavyServicePattern = /tac|tomografia|risonanza|endoscop|artroscop|fluoroscop|laser|radioterapia|chemioterapia|scintigraf|dialisi|trasfusione/i;
+const quoteServiceMap = new Map<string, { name: string; slug: string; source: string; averagePrice: number | null }>();
+
+for (const name of standardQuoteServiceNames) {
+  const slug = serviceSlug(name);
+  quoteServiceMap.set(slug, { name, slug, source: 'standard', averagePrice: null });
+}
+
+for (const service of servicesPayload) {
+  const name = serviceName(service);
+  const slug = serviceSlug(name);
+  if (!name || !slug || equipmentHeavyServicePattern.test(name)) continue;
+  const averagePrice = Number(service.avg_price_from_taxonomy ?? service.average_price ?? service.price);
+  quoteServiceMap.set(slug, {
+    name,
+    slug,
+    source: 'declared',
+    averagePrice: Number.isFinite(averagePrice) ? averagePrice : null,
+  });
+}
+
+const quoteServiceOptions = Array.from(quoteServiceMap.values()).slice(0, 18);
+const defaultQuoteService = quoteServiceOptions[0] || { name: 'Visita semplice', slug: 'visita-semplice', source: 'standard', averagePrice: null };
+const quoteLocationLabel = locationLabel || city || province || '';
+const quoteDefaultMessage = [
+  `Vorrei chiedere un preventivo per ${defaultQuoteService.name}${quoteLocationLabel ? ` presso ${clinic.name} a ${quoteLocationLabel}` : ` presso ${clinic.name}`}.`,
+  'Potete indicarmi disponibilita, prezzo indicativo e tempi?',
+  '',
+  'Grazie',
+].join('\n');
+
+const reviews = Array.from(
+  new Map(
+    (Array.isArray(root?.latest3) ? root.latest3 : []).map((review: any) => [
+      review.review_id || `${reviewBody(review)}-${review.created_at_g}`,
+      review,
+    ])
+  ).values()
+) as any[];
+
+const ratingSummary = root?.summary || null;
+const clinicRatingValue = Number(clinic.rating_avg_cached);
+const summaryRatingValue = Number(ratingSummary?.rating_avg_cached);
+const ratingValue = Number.isFinite(clinicRatingValue) ? clinicRatingValue : summaryRatingValue;
+const rating = Number.isFinite(ratingValue) ? ratingValue : null;
+const ratingDisplay = rating !== null ? rating.toFixed(1).replace('.', ',') : null;
+const clinicReviewCountValue = Number(clinic.rating_count_cached);
+const summaryReviewCountValue = Number(ratingSummary?.rating_count_cached);
+const reviewCountValue = Number.isFinite(clinicReviewCountValue) ? clinicReviewCountValue : summaryReviewCountValue;
+const reviewCount = Number.isFinite(reviewCountValue) ? reviewCountValue : null;
+const analyzedReviewCountValue = Number(clinic.deepupdate_payload?.deepseek?.review_count);
+const analyzedReviewCount = Number.isFinite(analyzedReviewCountValue) && analyzedReviewCountValue > 0
+  ? analyzedReviewCountValue
+  : null;
+const sentimentSampleIsPartial = analyzedReviewCount !== null
+  && reviewCount !== null
+  && analyzedReviewCount < reviewCount;
+const sentimentItems = clinic.sentiment && typeof clinic.sentiment === 'object'
+  ? sentimentConfig
+      .map((item) => {
+        const sentiment = clinic.sentiment?.[item.key];
+        if (!sentiment) return null;
+        const score = Number(sentiment.score);
+        return {
+          ...item,
+          sentiment,
+          score: Number.isFinite(score) ? score : null,
+          categoryLabel: item.label,
+          sentimentLabel: sentimentLabel(sentiment.label),
+          summary: cleanText(sentiment.summary),
+          shortSummary: shortText(sentiment.summary),
+        };
+      })
+      .filter(Boolean)
+  : [];
+const positiveSentiments = sentimentItems
+  .filter((item: any) => cleanText(item.sentiment?.label).toLowerCase() === 'positive')
+  .sort((a: any, b: any) => (b.score ?? 0) - (a.score ?? 0))
+  .slice(0, 3);
+const watchSentiments = sentimentItems
+  .filter((item: any) => cleanText(item.sentiment?.label).toLowerCase() !== 'positive')
+  .sort((a: any, b: any) => (a.score ?? 1) - (b.score ?? 1))
+  .slice(0, 2);
+const isH24 = clinic.pronto_soccorso_h24 === true || resolveIsH24(clinic.hours, servicesList);
+const isVerifiedVet = Boolean(clinic.claimed_at || clinic.owner_id);
+const fnoviId = Number(clinic.fnovi_id);
+const isFnoviVerified = Number.isInteger(fnoviId) && fnoviId > 0;
+const fnoviUrl = isFnoviVerified
+  ? `https://www.struttureveterinarie.it/?q=dettaglistrutture&id_struttura=${fnoviId}&avanzata=1`
+  : '';
+const fnoviAlbo = rawImport?.fnovi_albo && typeof rawImport.fnovi_albo === 'object'
+  ? rawImport.fnovi_albo
+  : null;
+const fnoviVeterinarianId = Number(fnoviAlbo?.veterinario_id);
+const isFnoviAlboMember = Number.isInteger(fnoviVeterinarianId) && fnoviVeterinarianId > 0;
+const fnoviAlboUrl = 'https://fnovi.it/iscritti-ordine?ricerca=1&pagina=';
+const isPendingReview = clinic.status === 'in_revisione';
+const hours = normalizeHours(clinic.hours);
+const todayLabel = IT_DAYS[new Date().getDay()];
+const openState = computeOpenState(clinic.hours);
+const emergencyH24State = clinic.pronto_soccorso_h24 === true
+  ? {
+      state: 'open',
+      message: 'Emergenze: Pronto Soccorso aperto H24',
+      extra: openState.state === 'open'
+        ? `Visite ordinarie: aperto. ${openState.extra || ''}`.trim()
+        : openState.state === 'closed'
+          ? `Visite ordinarie: ${openState.extra || 'verifica gli orari'}. Chiama prima di partire.`
+          : 'Per le visite ordinarie verifica gli orari. Chiama prima di partire.',
+    }
+  : null;
+const displayedOpenState = emergencyH24State || openState;
+const openStateBadgeClass = displayedOpenState.state === 'open'
+  ? 'border-green-200 bg-green-50 text-green-800'
+  : 'border-amber-200 bg-amber-50 text-amber-900';
+const callButtonClass = displayedOpenState.state === 'open'
+  ? 'bg-green-600 text-white hover:bg-green-700'
+  : 'bg-amber-500 text-white hover:bg-amber-600';
+const googlePlaceIdValue = googlePlaceId(rawImport);
+const googleCidValue = googleCid(rawImport);
+const googleQuery = `${clinic.name} ${clinic.address || ''}`.trim();
+const googleMapsUrl = googlePlaceIdValue
+  ? `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(googleQuery)}&query_place_id=${encodeURIComponent(googlePlaceIdValue)}`
+  : `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(googleQuery)}`;
+const googleReviewsUrl = googleCidValue
+  ? `https://www.google.com/search?q=${encodeURIComponent(`${googleQuery} recensioni`)}&ludocid=${encodeURIComponent(googleCidValue)}#lkt=LocalPoiReviews`
+  : `${googleMapsUrl}#lkt=LocalPoiReviews`;
+const googleDirections = hasPosition ? googleDirectionsUrl(lat, lng) : googleMapsUrl;
+
+function looksLikeReviewAnalysis(value: unknown) {
+  // Solo meta-report da scartare; le descrizioni fluide DeepSeek restano valide.
+  const text = stripHtml(value).toLowerCase();
+  if (!text) return false;
+  return (
+    text.includes('analisi basata su un campione')
+    || text.includes('sintesi automatica basata')
+    || text.includes('campione parziale')
+    || text.includes('campione non rappresentativo')
+    || text.includes('polarizzazione')
+    || text.includes('si consiglia di considerare il campione')
+  );
+}
+
+const editorialDescription = cleanText(
+  rawImport?.google?.editorial_summary?.overview
+  || rawImport?.editorial_summary
+  || rawImport?.description
+  || clinic.description_plain,
+);
+const rawDescription = cleanText(clinic.description) ? String(clinic.description) : '';
+const descriptionIsAnalysis = looksLikeReviewAnalysis(rawDescription);
+const descriptionHtml = (!descriptionIsAnalysis && rawDescription)
+  ? rawDescription
+  : (editorialDescription || '');
+const descriptionText = stripHtml(
+  descriptionHtml ||
+  editorialDescription ||
+  `${clinic.name}: dettagli, servizi, indirizzo e contatti della struttura veterinaria${locationLabel ? ` a ${locationLabel}` : ''}.`
+);
+const defaultMetaDescription = stripHtml(
+  `Dettagli, servizi, recensioni, indirizzo e contatti di ${clinic.name}${locationLabel ? ` a ${locationLabel}` : ''}. ${descriptionText}`
+).slice(0, 300);
+const seoExperiment = rawImport?.seo && typeof rawImport.seo === 'object'
+  ? rawImport.seo
+  : {};
+const metaDescription = cleanText(seoExperiment.description) || defaultMetaDescription;
+
+let nearbyClinics: ClinicSummary[] = [];
+if (supabasePublicServer) {
+  const loadNearby = async (field?: 'city' | 'province' | 'region', value?: string) => {
+    let request = supabasePublicServer
+      .from('clinics')
+      .select('id, name, address, phone, slug, rating_avg_cached, rating_count_cached, raw_import, gallery_images, owner_id, claimed_at')
+      .in('status', ['pubblicata', 'in_revisione'])
+      .not('slug', 'is', null)
+      .neq('id', clinic.id)
+      .order('rating_avg_cached', { ascending: false, nullsFirst: false })
+      .order('rating_count_cached', { ascending: false, nullsFirst: false })
+      .limit(3);
+
+    if (field && value) {
+      request = request.eq(`raw_import->>${field}`, value);
+    }
+
+    const { data, error } = await request;
+    return error ? [] : ((data ?? []) as ClinicSummary[]);
+  };
+
+  nearbyClinics = city ? await loadNearby('city', city) : [];
+  if (nearbyClinics.length === 0 && province) {
+    nearbyClinics = await loadNearby('province', province);
+  }
+  if (nearbyClinics.length === 0 && region) {
+    nearbyClinics = await loadNearby('region', region);
+  }
+  if (nearbyClinics.length === 0) {
+    nearbyClinics = await loadNearby();
+  }
+}
+
+const seeAlsoLinks = [
+  city && province
+    ? { label: `Veterinari a ${city}`, href: canonicalVeterinariCityPath(city, province) }
+    : null,
+  city && province
+    ? { label: `Veterinari aperti H24 a ${city}`, href: canonicalH24CityPath(city, province) }
+    : null,
+  province
+    ? { label: `Veterinari in ${province}`, href: canonicalVeterinariProvincePath(province) }
+    : null,
+  region
+    ? { label: `Veterinari in ${region}`, href: canonicalVeterinariRegionPath(region) }
+    : null,
+].filter(Boolean) as Array<{ label: string; href: string }>;
+
+const serviceLocationLinks = (() => {
+  if (!city || !province) return [];
+
+  const locationSlug = `${slugifyLocation(city)}-${provinceSlug(province)}`;
+  const byService = new Map<string, { name: string; href: string }>();
+  const serviceCandidates = [
+    ...priceList.map((item) => item.service),
+    ...servicesList.map((service) => service.name),
+    ...fallbackServiceSeoLinks,
+  ];
+
+  for (const name of serviceCandidates) {
+    const label = cleanText(name);
+    const slugPart = serviceSlug(label);
+    if (!label || !slugPart || byService.has(slugPart)) continue;
+    byService.set(slugPart, {
+      name: `${label} a ${city}, ${province}`,
+      href: `/quanto-costa/${locationSlug}/${slugPart}/cliniche`,
+    });
+    if (byService.size >= 3) break;
+  }
+
+  return Array.from(byService.values());
+})();
+
+const pageUrl = `${siteConfig.url}/veterinari/${slug}`;
+const defaultTitle = `${clinic.name}${locationLabel ? ` - Veterinario a ${locationLabel}` : ''} | ${siteConfig.name}`;
+const title = cleanText(seoExperiment.title) || defaultTitle;
+const imageUrl = heroImage.startsWith('http') ? heroImage : `${siteConfig.url}${heroImage}`;
+const contactMessage = [
+  `Vorrei entrare in contatto con ${clinic.name}.`,
+  'Potete ricontattarmi per informazioni, disponibilita e tempi?',
+  '',
+  'Grazie',
+].join('\n');
+const captchaSecret = import.meta.env.AUTH_SECRET || process.env.AUTH_SECRET || import.meta.env.SUPABASE_SERVICE_ROLE_KEY || 'dev-quote-captcha-secret';
+const captchaA = Math.floor(Math.random() * 8) + 2;
+const captchaB = Math.floor(Math.random() * 8) + 2;
+const captchaExpires = Date.now() + 1000 * 60 * 30;
+const captchaPayload = `${captchaA}:${captchaB}:${captchaExpires}`;
+const captchaSignature = createHmac('sha256', captchaSecret).update(captchaPayload).digest('base64url');
+const captchaToken = `${captchaPayload}.${captchaSignature}`;
+
+const localBusinessLd = {
+  '@context': 'https://schema.org',
+  '@type': ['VeterinaryCare', 'LocalBusiness'],
+  '@id': pageUrl,
+  name: clinic.name,
+  url: pageUrl,
+  description: metaDescription,
+  telephone: clinic.phone || undefined,
+  email: clinic.email || undefined,
+  image: imageUrl,
+  sameAs: website ? [website] : undefined,
+  address: clinic.address ? {
+    '@type': 'PostalAddress',
+    streetAddress: clinic.address,
+    addressLocality: city || undefined,
+    addressRegion: province || region || undefined,
+    addressCountry: 'IT',
+  } : undefined,
+  geo: hasPosition ? {
+    '@type': 'GeoCoordinates',
+    latitude: lat,
+    longitude: lng,
+  } : undefined,
+};
+
+const breadcrumbLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: siteConfig.name, item: siteConfig.url },
+    { '@type': 'ListItem', position: 2, name: 'Cerca veterinari', item: `${siteConfig.url}/cerca-veterinari` },
+    { '@type': 'ListItem', position: 3, name: clinic.name, item: pageUrl },
+  ],
+};
+
+const serviceLd = servicesList.slice(0, 12).map((service) => ({
+  '@context': 'https://schema.org',
+  '@type': 'Service',
+  name: service.name,
+  category: service.category || 'Servizi veterinari',
+  provider: { '@id': pageUrl },
+  areaServed: city || province || region || 'Italia',
+}));
+
+const jsonLd = [localBusinessLd, breadcrumbLd, ...serviceLd];
+---
+
+<BaseLayout
+  title={title}
+  description={metaDescription}
+  canonical={pageUrl}
+  ogImage={imageUrl}
+  ogType="business.business"
+  jsonLd={jsonLd}
+>
+  <div class="min-h-screen bg-gray-50 pb-24 pt-8 md:pb-8">
+    <div class="mx-auto max-w-6xl px-4 sm:px-6 lg:px-8">
+      <a href="/cerca-veterinari" class="text-sm font-semibold text-green-700 hover:text-green-800">Torna alla ricerca</a>
+
+      <article class="mt-6 overflow-hidden rounded-lg border-0 bg-white shadow-xl">
+        <div class="vet-detail-hero relative h-48 overflow-hidden bg-gray-200 sm:h-72 lg:h-80">
+          {hasHeroPhoto ? (
+            <img
+              src={heroImage}
+              alt={`Galleria di ${clinic.name}`}
+              class="h-full w-full object-cover object-center"
+              loading="eager"
+              fetchpriority="high"
+              width="1920"
+              height="1080"
+              decoding="async"
+              onerror="this.onerror=null;this.src='/favicon.svg';this.classList.remove('object-cover');this.classList.add('object-contain','p-16','bg-gradient-to-br','from-green-100','to-blue-100');"
+            />
+          ) : (
+            <div class="flex h-full w-full items-center justify-center bg-gradient-to-br from-green-100 to-blue-100">
+              <img src="/favicon.svg" alt="" class="h-24 w-24" loading="eager" />
+            </div>
+          )}
+          <div class="vet-detail-hero-overlay absolute inset-0"></div>
+        </div>
+
+        <header class="border-b border-gray-100 bg-white p-5 sm:p-6">
+          <div class="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div class={`vet-detail-status rounded-lg border px-3 py-2 text-sm font-semibold ${openStateBadgeClass}`}>
+              {displayedOpenState.state === 'open' ? (
+                <CheckCircle2 className="h-4 w-4 shrink-0" aria-hidden="true" />
+              ) : (
+                <AlertTriangle className="h-4 w-4 shrink-0" aria-hidden="true" />
+              )}
+              <span class="min-w-0">{displayedOpenState.message}</span>
+              {displayedOpenState.extra && <span class="min-w-0 opacity-90">{displayedOpenState.extra}</span>}
+            </div>
+            <div class="flex flex-wrap gap-2 sm:justify-end">
+              {isH24 && (
+                <div class="inline-flex items-center gap-1 rounded-full bg-red-600 px-3 py-1 text-sm font-semibold text-white shadow-sm">
+                  <Clock className="h-4 w-4" aria-hidden="true" />
+                  H24
+                </div>
+              )}
+              {clinic.pronto_soccorso_h24 === true && (
+                <div class="inline-flex items-center gap-1 rounded-full bg-orange-600 px-3 py-1 text-sm font-semibold text-white shadow-sm">
+                  <Stethoscope className="h-4 w-4" aria-hidden="true" />
+                  Pronto Soccorso H24
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div class="mt-5">
+            <div class="mb-2 flex flex-wrap items-center gap-2">
+              <p class="text-sm font-semibold uppercase tracking-wide text-green-700">Clinica veterinaria</p>
+            </div>
+            <h1 class="max-w-4xl break-words text-3xl font-bold leading-tight text-gray-950 sm:text-4xl">{clinic.name}</h1>
+            <div class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+              <button
+                type="button"
+                data-favorite-clinic
+                data-clinic-id={String(clinic.id)}
+                class="inline-flex w-full items-center justify-center rounded-md border border-rose-200 bg-white px-4 py-3 text-sm font-bold text-rose-700 shadow-sm hover:bg-rose-50 sm:w-auto"
+                aria-pressed="false"
+              >
+                <Heart className="mr-2 h-5 w-5" aria-hidden="true" />
+                <span data-favorite-label>Salva tra i preferiti</span>
+              </button>
+              {isVerifiedVet && (
+                <span class="inline-flex w-full items-center justify-center gap-2 rounded-md border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-bold text-emerald-800 sm:w-auto">
+                  <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+                  Scheda verificata dal proprietario
+                </span>
+              )}
+              {isFnoviVerified && (
+                <a
+                  href={fnoviUrl}
+                  target="_blank"
+                  rel="nofollow noopener noreferrer"
+                  class="inline-flex w-full items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-4 py-3 text-sm font-bold text-slate-800 shadow-sm hover:bg-slate-50 sm:w-auto"
+                >
+                  <img src="/media/fnovi/fnovi-logo.svg" alt="FNOVI" class="h-6 w-auto" loading="lazy" />
+                  <span>Struttura verificata su FNOVI</span>
+                  <ExternalLink className="h-4 w-4" aria-hidden="true" />
+                </a>
+              )}
+              <p data-favorite-feedback class="hidden text-sm font-semibold text-emerald-700"></p>
+            </div>
+            {clinic.specialization && <p class="mt-2 text-base leading-7 text-gray-600 sm:text-lg">{clinic.specialization}</p>}
+          </div>
+        </header>
+
+        {clinic.status === 'rimossa' && (
+          <div class="bg-red-600 px-6 py-4 text-white shadow-lg">
+            <p class="font-semibold text-lg">Chiusa definitivamente</p>
+            <p class="text-sm opacity-90">Questa attività risulta chiusa definitivamente secondo Google Business Profile.</p>
+          </div>
+        )}
+
+        {isPendingReview && (
+          <div class="border-y border-amber-200 bg-amber-50 px-6 py-4 text-amber-950">
+            <p class="text-lg font-bold">Scheda in attesa di revisione</p>
+            <p class="mt-1 text-sm leading-6">
+              La struttura ha richiesto la gestione della scheda. I dati sono visibili e ricercabili, ma alcune informazioni possono essere aggiornate dopo la verifica.
+            </p>
+          </div>
+        )}
+
+        <div class="grid grid-cols-1 gap-8 p-4 sm:p-6 lg:grid-cols-3">
+          <div class="order-2 space-y-6 lg:order-1 lg:col-span-2">
+            <section class="rounded-lg border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+              <h2 class="text-xl font-bold text-gray-900">Descrizione</h2>
+              {descriptionHtml ? (
+                <div class="mt-4 space-y-3 text-sm leading-7 text-slate-700" set:html={descriptionHtml} />
+              ) : (
+                <p class="mt-4 text-sm leading-7 text-slate-700">{descriptionText}</p>
+              )}
+            </section>
+
+            {sentimentItems.length > 0 && (
+              <section class="rounded-lg border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+                <div class="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <h2 class="flex items-center gap-2 text-xl font-bold text-gray-900">
+                    <MessageSquare className="h-5 w-5 text-purple-600" aria-hidden="true" />
+                    Cosa dicono i clienti
+                  </h2>
+                  {rating !== null && (
+                    <p class="rounded-full bg-emerald-50 px-3 py-1 text-sm font-semibold text-emerald-800">
+                      {ratingDisplay} su 5{reviewCount !== null ? ` · ${reviewCount} recensioni Google` : ''}
+                    </p>
+                  )}
+                </div>
+                <div class="mt-5 grid gap-5 md:grid-cols-2">
+                  <div>
+                    <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">
+                      {sentimentSampleIsPartial ? 'Punti forti nel campione' : 'Punti forti ricorrenti'}
+                    </p>
+                    {positiveSentiments.length > 0 ? (
+                      <ul class="mt-3 space-y-3 text-sm leading-6 text-gray-700">
+                        {positiveSentiments.map((item: any) => (
+                          <li class="flex gap-2">
+                            <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-700" aria-hidden="true" />
+                            <span><strong>{item.categoryLabel}</strong>: {item.shortSummary || item.categoryLabel}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p class="mt-3 text-sm leading-6 text-gray-600">Le recensioni disponibili sono in fase di analisi.</p>
+                    )}
+                  </div>
+                  <div>
+                    <p class="text-xs font-bold uppercase tracking-wide text-amber-700">
+                      {sentimentSampleIsPartial ? 'Aspetti segnalati nel campione' : 'Da sapere'}
+                    </p>
+                    {watchSentiments.length > 0 ? (
+                      <ul class="mt-3 space-y-3 text-sm leading-6 text-gray-700">
+                        {watchSentiments.map((item: any) => (
+                          <li class="flex gap-2">
+                            <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden="true" />
+                            <span><strong>{item.categoryLabel}</strong>: {item.shortSummary || item.categoryLabel}</span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p class="mt-3 text-sm leading-6 text-gray-600">Non emergono criticità ricorrenti dalle recensioni analizzate.</p>
+                    )}
+                  </div>
+                </div>
+                <p class="mt-5 border-t border-gray-200 pt-4 text-xs leading-5 text-gray-500">
+                  {sentimentSampleIsPartial
+                    ? `Sintesi automatica basata sulle ${analyzedReviewCount} recensioni testuali rese disponibili da Google. Il voto complessivo e calcolato da Google su ${reviewCount} recensioni.`
+                    : `Sintesi automatica basata su ${analyzedReviewCount ? `${analyzedReviewCount} ` : ''}recensioni Google disponibili.`}
+                </p>
+              </section>
+            )}
+
+            {servicesList.length > 0 && (
+              <section class="rounded-lg border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+                <h2 class="text-xl font-bold text-gray-900">Servizi Offerti</h2>
+                <ul class="mt-4 flex gap-2" style="flex-wrap: wrap;">
+                  {servicesList.map((service) => (
+                    <li class="rounded-full bg-gray-100 px-3 py-1 text-sm text-gray-700">{service.name}</li>
+                  ))}
+                </ul>
+              </section>
+            )}
+
+            {priceList.length > 0 && (
+              <section class="rounded-lg border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+                <h2 class="flex flex-wrap items-center gap-2 text-xl font-bold text-gray-900">
+                  <DollarSign className="h-6 w-6 text-green-600" aria-hidden="true" />
+                  Listino Prezzi
+                  <span class="ml-2 text-sm font-normal text-gray-500">
+                    ({priceList.length} {priceList.length === 1 ? 'prestazione' : 'prestazioni'})
+                  </span>
+                </h2>
+
+                <div class="mt-5 space-y-6">
+                  {priceCategories.map((category) => (
+                    <div>
+                      <h3 class="border-b border-gray-200 pb-2 font-semibold text-gray-800">{category}</h3>
+                      <ul class="mt-2 divide-y divide-gray-100">
+                        {pricesByCategory[category].map((item: any) => {
+                          const diff = item.avgPrice ? Math.round(((item.price - item.avgPrice) / item.avgPrice) * 100) : null;
+                          const diffClass = diff !== null && diff > 5
+                            ? 'text-red-600'
+                            : diff !== null && diff < -5
+                              ? 'text-green-600'
+                              : 'text-gray-600';
+
+                          return (
+                            <li class="flex flex-col gap-2 py-3 sm:flex-row sm:items-start sm:justify-between">
+                              <div>
+                                <div class="flex flex-wrap items-center gap-2">
+                                  <span class="font-medium text-gray-700">{item.service}</span>
+                                  {item.animalType && (
+                                    <span class="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">{item.animalType}</span>
+                                  )}
+                                </div>
+                                {item.avgPrice && (
+                                  <p class="mt-1 text-xs text-gray-500">
+                                    Media di mercato: {toMoney(item.avgPrice)}
+                                    {diff !== null && <span class={`ml-2 ${diffClass}`}>({diff > 0 ? '+' : ''}{diff}%)</span>}
+                                  </p>
+                                )}
+                              </div>
+                              <span class="whitespace-nowrap text-lg font-bold text-green-600">{toMoney(item.price)}</span>
+                            </li>
+                          );
+                        })}
+                      </ul>
+                    </div>
+                  ))}
+                </div>
+                <p class="mt-4 border-t border-gray-200 pt-4 text-xs text-gray-500">
+                  I prezzi sono indicativi e ricavati dai dati disponibili, possono contenere errori e variare. Contatta la clinica per confermare tariffe e disponibilità.
+                </p>
+              </section>
+            )}
+
+            {(rating !== null || reviews.length > 0) && (
+              <section class="rounded-lg border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+                <h2 class="flex items-center gap-2 text-xl font-bold text-gray-900">
+                  <MessageSquare className="h-6 w-6 text-blue-600" aria-hidden="true" />
+                  Recensioni da Google
+                </h2>
+                {rating !== null && (
+                  <div class="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <div class="flex items-center gap-0.5 text-yellow-400" aria-label={`${ratingDisplay} stelle su 5`}>
+                      {Array.from({ length: Math.round(rating) }).map(() => <Star className="h-5 w-5 fill-current" aria-hidden="true" />)}
+                      {Array.from({ length: 5 - Math.round(rating) }).map(() => <Star className="h-5 w-5" aria-hidden="true" />)}
+                    </div>
+                    <p class="font-semibold text-gray-600">
+                      {ratingDisplay} su 5{reviewCount !== null ? ` (${reviewCount} recensioni verificate di Google)` : ''}
+                    </p>
+                  </div>
+                )}
+
+                {reviews.length > 0 ? (
+                  <div class="mt-5 space-y-4">
+                    {reviews.slice(0, 5).map((review) => (
+                      <div class="flex gap-4 border-b border-gray-100 pb-4 last:border-0 last:pb-0">
+                        <div class="h-10 w-10 shrink-0 overflow-hidden rounded-full bg-green-100">
+                          {review.reviewer_photo ? (
+                            <img src={review.reviewer_photo} alt={reviewName(review)} class="h-full w-full object-cover" loading="lazy" />
+                          ) : (
+                            <div class="flex h-full w-full items-center justify-center font-semibold text-green-700">{reviewName(review).charAt(0)}</div>
+                          )}
+                        </div>
+                        <div class="min-w-0 flex-1">
+                          <div class="flex flex-wrap items-center gap-2">
+                            <p class="font-semibold text-gray-900">{reviewName(review)}</p>
+                            <span class="rounded-full bg-blue-100 px-2 py-0.5 text-xs font-medium text-blue-800">Google</span>
+                            {reviewRating(review) !== null && (
+                              <span class="ml-auto flex items-center gap-0.5 text-yellow-400">
+                                {Array.from({ length: Math.round(reviewRating(review) || 0) }).map(() => <Star className="h-4 w-4 fill-current" aria-hidden="true" />)}
+                                {Array.from({ length: 5 - Math.round(reviewRating(review) || 0) }).map(() => <Star className="h-4 w-4" aria-hidden="true" />)}
+                              </span>
+                            )}
+                          </div>
+                          {reviewBody(review) && <p class="mt-1 text-sm leading-6 text-gray-600">"{reviewBody(review)}"</p>}
+                          {formatDate(review.created_at_g) && <p class="mt-1 text-xs text-gray-400">{formatDate(review.created_at_g)}</p>}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p class="mt-4 text-gray-500">Nessuna recensione disponibile al momento.</p>
+                )}
+
+                <a
+                  href={googleReviewsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  class="mt-6 inline-flex w-full justify-center rounded-md border border-gray-300 px-4 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50"
+                >
+                  Leggi tutte le recensioni su Google
+                  <ExternalLink className="ml-2 h-4 w-4" aria-hidden="true" />
+                </a>
+              </section>
+            )}
+
+            <section class="rounded-lg border border-emerald-200 bg-emerald-50 p-5 shadow-sm sm:p-6">
+              <p class="text-sm font-semibold uppercase text-emerald-700">Area Pet Lover</p>
+              <h2 class="mt-2 flex flex-wrap items-center gap-2 text-xl font-bold text-emerald-950">
+                Hai un amico peloso
+                <Heart className="h-5 w-5 fill-rose-500 text-rose-500" aria-hidden="true" />
+                ?
+              </h2>
+              <p class="mt-1 text-lg font-bold text-emerald-950">Entra nella comunità dei pet lovers!</p>
+              <p class="mt-2 text-sm leading-6 text-emerald-900">
+                Crea gratis la zampa digitale per chi ami ogni giorno: salva veterinari preferiti, gestisci dati sanitari, vaccini, spese e condividi la scheda con il veterinario quando serve.
+              </p>
+              <div class="mt-5 flex flex-col gap-2 sm:flex-row">
+                <a href="/register?type=proprietario&redirect=/dashboard/pet-lover" rel="nofollow" class="inline-flex justify-center rounded-md bg-emerald-600 px-4 py-3 text-sm font-bold text-white hover:bg-emerald-700">
+                  Registrati alla comunità
+                </a>
+                <a href="/pet-lover" class="inline-flex justify-center rounded-md border border-emerald-300 bg-white px-4 py-3 text-sm font-bold text-emerald-800 hover:bg-emerald-100">
+                  Scopri i vantaggi
+                </a>
+              </div>
+            </section>
+
+            {!isVerifiedVet && (
+              <section class="rounded-lg border border-green-200 bg-green-50 p-5 shadow-sm sm:p-6">
+                <p class="text-lg font-bold text-green-950">Sei il titolare di questa attività?</p>
+                <p class="mt-2 text-base leading-7 text-green-900">Aggiorna gratis orari, servizi, foto e contatti della tua scheda.</p>
+                <a href={`/claim?clinic=${encodeURIComponent(clinic.id)}`} class="mt-5 inline-flex w-full justify-center rounded-md bg-green-600 px-4 py-3 text-base font-semibold text-white hover:bg-green-700 sm:w-auto">
+                  <Edit className="mr-2 h-5 w-5" aria-hidden="true" />
+                  Registrati gratis
+                </a>
+              </section>
+            )}
+          </div>
+
+          <aside class="order-1 space-y-6 lg:order-2">
+            {hasPosition && (
+              <section class="overflow-hidden rounded-lg border border-gray-100 bg-white shadow-md">
+                <div class="flex items-center justify-between gap-3 p-4">
+                  <h2 class="flex items-center gap-2 text-lg font-bold text-gray-900">
+                    <MapPin className="h-5 w-5 text-gray-600" aria-hidden="true" />
+                    Mappa
+                  </h2>
+                  <a href={googleDirections} data-clinic-id={String(clinic.id)} target="_blank" rel="noopener noreferrer" class="inline-flex items-center text-sm font-semibold text-green-700 hover:underline">
+                    Portami qui
+                    <ExternalLink className="ml-1 h-4 w-4" aria-hidden="true" />
+                  </a>
+                </div>
+                <div class="vet-detail-map-wrap">
+                  <iframe
+                    title={`Mappa di ${clinic.name}`}
+                    src={mapEmbedUrl(lat, lng)}
+                    class="vet-detail-map w-full border-0"
+                    loading="lazy"
+                    referrerpolicy="no-referrer-when-downgrade"
+                  ></iframe>
+                </div>
+              </section>
+            )}
+
+            <section class="rounded-lg border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+              <h2 class="text-xl font-bold text-gray-900">Contatti e Orari</h2>
+              <div class="mt-4 space-y-4 text-sm text-gray-700">
+                {clinic.address && (
+                  <div class="flex items-start gap-3">
+                    <MapPin className="mt-1 h-5 w-5 shrink-0 text-gray-600" aria-hidden="true" />
+                    <div>
+                      <p class="font-medium text-gray-900">Indirizzo</p>
+                      <p class="mt-1 leading-6">{clinic.address}</p>
+                    <div class="mt-3 flex flex-wrap gap-2">
+                    <a href={googleDirections} data-clinic-id={String(clinic.id)} target="_blank" rel="noopener noreferrer" class="inline-flex items-center rounded-md bg-green-600 px-3 py-2 font-semibold text-white hover:bg-green-700">
+                        <Navigation className="mr-1 h-4 w-4" aria-hidden="true" />
+                        Apri percorso
+                      </a>
+                    </div>
+                    </div>
+                  </div>
+                )}
+                {clinic.phone && (
+                  <div class="flex items-center gap-3">
+                    <Phone className="h-5 w-5 shrink-0 text-gray-600" aria-hidden="true" />
+                    <div>
+                      <p class="font-medium text-gray-900">Telefono</p>
+                      <a href={`tel:${normalizePhone(clinic.phone)}`} data-clinic-id={String(clinic.id)} class="mt-1 inline-block hover:underline">{clinic.phone}</a>
+                    </div>
+                  </div>
+                )}
+                {clinic.email && (
+                  <div class="flex items-center gap-3">
+                    <MessageSquare className="h-5 w-5 shrink-0 text-gray-600" aria-hidden="true" />
+                    <div class="min-w-0">
+                      <p class="font-medium text-gray-900">Richiesta informazioni</p>
+                      <button type="button" data-contact-open class="mt-2 inline-flex rounded-md border border-green-200 px-3 py-2 text-sm font-semibold text-green-700 hover:bg-green-50">
+                        Entra in contatto
+                      </button>
+                    </div>
+                  </div>
+                )}
+                {website && (
+                  <div class="flex items-center gap-3">
+                    <Globe className="h-5 w-5 shrink-0 text-gray-600" aria-hidden="true" />
+                    <div class="min-w-0">
+                      <p class="font-medium text-gray-900">Sito web</p>
+                      <a href={website} target="_blank" rel="noopener noreferrer" class="mt-1 inline-block break-all font-semibold text-blue-600 hover:underline">
+                        {website.toLowerCase().includes('facebook.com') ? 'Fanpage Facebook' : website}
+                      </a>
+                    </div>
+                  </div>
+                )}
+                {isFnoviAlboMember && (
+                  <form
+                    action={fnoviAlboUrl}
+                    method="post"
+                    target="_blank"
+                    rel="nofollow noopener noreferrer"
+                  >
+                    <input type="hidden" name="VETERINARIO_ID" value={String(fnoviVeterinarianId)} />
+                    <input type="hidden" name="button-scheda" value="scheda" />
+                    <button
+                      type="submit"
+                      class="inline-flex items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 font-semibold text-emerald-800 hover:bg-emerald-100"
+                      aria-label="Verifica l'iscrizione all'Albo FNOVI"
+                    >
+                      <CheckCircle2 className="h-5 w-5 shrink-0" aria-hidden="true" />
+                      <span>Veterinario iscritto all'Albo</span>
+                      <ExternalLink className="h-4 w-4 shrink-0" aria-hidden="true" />
+                    </button>
+                  </form>
+                )}
+              </div>
+
+              <div class="mt-5 border-t border-gray-200 pt-4">
+                <h3 class="font-semibold text-gray-900">Orari</h3>
+                {hours.length > 0 ? (
+                  <ul class="mt-2 space-y-1 text-sm text-gray-700">
+                    {hours.map((item) => (
+                      <li class={`flex justify-between gap-4 rounded-md px-2 py-1.5 ${item.day === todayLabel ? 'border border-green-200 bg-green-50 text-green-900' : ''}`}>
+                        <span class="flex items-center gap-2">
+                          {item.day}
+                        </span>
+                        <span class={`text-right font-medium ${item.day === todayLabel ? 'text-green-900' : ''}`}>{item.time}</span>
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p class="mt-2 text-sm text-gray-500">Orari non disponibili. Controlla telefonicamente.</p>
+                )}
+              </div>
+
+              {(clinic.reperibilita_h24 || clinic.direttore_sanitario || clinic.pronto_soccorso_h24) && (
+                <div class="mt-5 space-y-3 border-t border-gray-200 pt-4 text-sm">
+                  {clinic.reperibilita_h24 && (
+                    <div>
+                      <p class="font-semibold text-gray-900">Reperibilità H24</p>
+                      <p class="mt-1 text-gray-700">{clinic.reperibilita_h24}</p>
+                    </div>
+                  )}
+                  {clinic.direttore_sanitario && (
+                    <div>
+                      <p class="font-semibold text-gray-900">Direttore Sanitario</p>
+                      <p class="mt-1 text-gray-700">{clinic.direttore_sanitario}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+
+            {clinic.phone && (
+              <a href={`tel:${normalizePhone(clinic.phone)}`} data-clinic-id={String(clinic.id)} class={`inline-flex w-full justify-center rounded-md px-4 py-3 text-base font-semibold shadow ${callButtonClass}`}>
+                <Phone className="mr-2 h-5 w-5" aria-hidden="true" />
+                Chiama Ora
+              </a>
+            )}
+
+          </aside>
+        </div>
+      </article>
+
+      {nearbyClinics.length > 0 && (
+        <section class="mt-8 rounded-lg border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+          <h2 class="text-xl font-bold text-gray-900">Altri veterinari vicini</h2>
+          <div class="mt-5 grid grid-cols-1 gap-4 md:grid-cols-2 lg:grid-cols-3">
+            {nearbyClinics.map((nearby) => <ClinicCard clinic={nearby} />)}
+          </div>
+        </section>
+      )}
+
+      {seeAlsoLinks.length > 0 && (
+        <section class="mt-6 rounded-lg border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+          <h2 class="text-xl font-bold text-gray-900">Vedi anche</h2>
+          <div class="mt-4 flex gap-3" style="flex-wrap: wrap;">
+            {seeAlsoLinks.map((link) => (
+              <a href={link.href} class="inline-flex items-center rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                {link.label}
+                <ChevronRight className="ml-2 h-4 w-4" aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+
+      {serviceLocationLinks.length > 0 && (
+        <section class="mt-6 rounded-lg border border-gray-100 bg-white p-5 shadow-sm sm:p-6">
+          <h2 class="text-xl font-bold text-gray-900">Prestazioni veterinarie in zona</h2>
+          <div class="mt-4 flex gap-3" style="flex-wrap: wrap;">
+            {serviceLocationLinks.map((link) => (
+              <a href={link.href} class="inline-flex items-center rounded-md border border-indigo-200 px-3 py-2 text-sm font-semibold text-indigo-700 hover:bg-indigo-50">
+                {link.name}
+                <ChevronRight className="ml-2 h-4 w-4" aria-hidden="true" />
+              </a>
+            ))}
+          </div>
+        </section>
+      )}
+    </div>
+
+    {clinic.email && (
+      <div id="contact-modal" class="fixed inset-0 z-50 hidden" aria-hidden="true">
+        <div class="absolute inset-0 bg-gray-950/60" data-contact-close></div>
+        <div class="relative mx-auto flex h-[100svh] w-full max-w-2xl items-end p-0 sm:min-h-screen sm:items-center sm:p-4">
+          <div class="flex h-[92svh] max-h-[92svh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:h-auto sm:max-h-[92vh] sm:rounded-lg">
+            <div class="shrink-0 border-b border-gray-100">
+              <div class="flex items-start justify-between gap-4">
+                <div class="p-5 pb-0 sm:p-6 sm:pb-0">
+                  <p class="text-xs font-bold uppercase tracking-wide text-green-600">Entra in contatto</p>
+                  <h2 class="mt-1 text-xl font-bold text-gray-900">Richiedi informazioni a {clinic.name}</h2>
+                  <p class="mt-2 text-sm leading-6 text-gray-600">
+                    La richiesta viene inviata alla struttura tramite Veterinari.org e registrata per controllo qualita.
+                  </p>
+                </div>
+                <button type="button" data-contact-close class="mr-5 mt-5 shrink-0 rounded-md border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 sm:mr-6 sm:mt-6">
+                  Chiudi
+                </button>
+              </div>
+            </div>
+
+            <form class="flex min-h-0 flex-1 flex-col" data-contact-form>
+              <div class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6" style="-webkit-overflow-scrolling: touch;">
+                <input type="hidden" name="clinic_id" value={clinic.id} />
+                <input type="hidden" name="clinic_name" value={clinic.name} />
+                <input type="hidden" name="captcha_token" value={captchaToken} />
+                <input type="text" name="company" class="hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
+
+                <div>
+                  <label for="contact-name" class="text-sm font-semibold text-gray-900">Nome e cognome</label>
+                  <input id="contact-name" name="name" type="text" autocomplete="name" class="mt-1 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100" placeholder="Es. Mario Rossi" />
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label for="contact-email" class="text-sm font-semibold text-gray-900">Email</label>
+                    <input id="contact-email" name="email" type="email" autocomplete="email" class="mt-1 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100" placeholder="nome@email.it" />
+                  </div>
+                  <div>
+                    <label for="contact-phone" class="text-sm font-semibold text-gray-900">Telefono</label>
+                    <input id="contact-phone" name="phone" type="tel" autocomplete="tel" class="mt-1 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100" placeholder="+39..." />
+                  </div>
+                </div>
+                <p class="text-xs leading-5 text-gray-500">Inserisci almeno email o telefono: la struttura usera questo contatto per risponderti.</p>
+
+                <div>
+                  <label for="contact-message" class="text-sm font-semibold text-gray-900">Richiesta</label>
+                  <textarea id="contact-message" name="message" rows="5" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-base leading-6 text-gray-900 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100">{contactMessage}</textarea>
+                </div>
+
+                <div data-contact-pet-panel class="hidden rounded-md border border-emerald-200 bg-emerald-50 p-4">
+                  <label for="contact-pet-id" class="text-sm font-semibold text-emerald-950">Allega la scheda del tuo animale</label>
+                  <select id="contact-pet-id" name="pet_id" class="mt-2 min-h-12 w-full rounded-md border border-emerald-200 bg-white px-3 py-2 text-base text-gray-900 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100">
+                    <option value="">Non allegare animali</option>
+                  </select>
+                  <p class="mt-2 text-xs leading-5 text-emerald-900">Creiamo un link privato valido 14 giorni con dati base e sanitari. Puoi revocarlo dall'Area Pet Lover.</p>
+                </div>
+
+                <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+                  <label for="contact-captcha" class="text-sm font-semibold text-gray-900">Verifica anti-spam: quanto fa {captchaA} + {captchaB}?</label>
+                  <input id="contact-captcha" name="captcha_answer" type="number" inputmode="numeric" class="mt-2 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-green-500 focus:ring-2 focus:ring-green-100" />
+                </div>
+
+                <label class="flex gap-3 rounded-md border border-gray-200 bg-white p-3 text-sm leading-6 text-gray-700">
+                  <input name="privacy_accepted" type="checkbox" value="true" required class="mt-1 h-5 w-5 shrink-0 rounded border-gray-300 text-green-600 focus:ring-green-500" />
+                  <span>
+                    Ho letto l'informativa privacy e autorizzo Veterinari.org a inviare questa richiesta alla struttura.
+                    <a href="/privacy-policy" target="_blank" class="font-semibold text-green-700 underline">Privacy policy</a>
+                  </span>
+                </label>
+
+                <div data-contact-feedback class="hidden rounded-md px-3 py-2 text-sm leading-6"></div>
+              </div>
+
+              <div class="shrink-0 border-t border-gray-100 bg-white p-4 shadow-[0_-10px_24px_rgba(15,23,42,0.08)] sm:p-6">
+                <button type="submit" class="inline-flex min-h-12 w-full items-center justify-center rounded-md bg-green-600 px-5 py-3 text-base font-bold text-white hover:bg-green-700 disabled:cursor-wait disabled:bg-green-300">
+                  Invia richiesta
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    )}
+
+    {clinic.email && quoteServiceOptions.length > 0 && (
+      <div id="clinic-quote-modal" class="fixed inset-0 z-[70] hidden" aria-hidden="true">
+        <div class="absolute inset-0 bg-gray-950/60" data-clinic-quote-close></div>
+        <div class="relative mx-auto flex h-[100svh] w-full max-w-2xl items-end p-0 sm:min-h-screen sm:items-center sm:p-4">
+          <div class="flex h-[92svh] max-h-[92svh] w-full flex-col overflow-hidden rounded-t-2xl bg-white shadow-2xl sm:h-auto sm:max-h-[92vh] sm:rounded-lg">
+            <div class="shrink-0 border-b border-gray-100">
+              <div class="flex items-start justify-between gap-4">
+                <div class="p-5 pb-0 sm:p-6 sm:pb-0">
+                  <p class="text-xs font-bold uppercase tracking-wide text-emerald-700">Richiesta preventivo</p>
+                  <h2 class="mt-1 text-xl font-bold text-gray-900">Chiedi un preventivo a {clinic.name}</h2>
+                  <p class="mt-2 text-sm leading-6 text-gray-600">
+                    Scegli una prestazione: la richiesta viene inviata via email alla struttura tramite Veterinari.org.
+                  </p>
+                </div>
+                <button type="button" data-clinic-quote-close class="mr-5 mt-5 shrink-0 rounded-md border border-gray-200 px-3 py-2 text-sm font-semibold text-gray-700 sm:mr-6 sm:mt-6">
+                  Chiudi
+                </button>
+              </div>
+            </div>
+
+            <form
+              class="flex min-h-0 flex-1 flex-col"
+              data-clinic-quote-form
+              data-clinic-id={String(clinic.id)}
+              data-clinic-name={clinic.name}
+              data-location-label={quoteLocationLabel}
+              data-source-path={detailPath}
+            >
+              <div class="min-h-0 flex-1 space-y-4 overflow-y-auto overscroll-contain px-5 py-5 sm:px-6" style="-webkit-overflow-scrolling: touch;">
+                <input type="hidden" name="captcha_token" value={captchaToken} />
+                <input type="text" name="company" class="hidden" tabindex="-1" autocomplete="off" aria-hidden="true" />
+
+                <div>
+                  <label for="clinic-quote-service" class="text-sm font-semibold text-gray-900">Prestazione</label>
+                  <select id="clinic-quote-service" name="service_slug" class="mt-1 min-h-12 w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-base text-gray-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100">
+                    {quoteServiceOptions.map((service) => (
+                      <option
+                        value={service.slug}
+                        data-service-name={service.name}
+                        data-average-price={service.averagePrice || ''}
+                        data-source={service.source}
+                      >
+                        {service.name}{service.source === 'declared' ? ' · dichiarata' : ''}
+                      </option>
+                    ))}
+                  </select>
+                  <p class="mt-2 text-xs leading-5 text-gray-500">
+                    Le prestazioni dichiarate dalla struttura sono evidenziate. Per esami specialistici complessi conviene chiamare prima.
+                  </p>
+                </div>
+
+                <div>
+                  <label for="clinic-quote-name" class="text-sm font-semibold text-gray-900">Nome e cognome <span class="font-normal text-gray-500">(facoltativo)</span></label>
+                  <input id="clinic-quote-name" name="name" type="text" autocomplete="name" class="mt-1 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" placeholder="Es. Mario Rossi" />
+                </div>
+
+                <div class="grid gap-4 sm:grid-cols-2">
+                  <div>
+                    <label for="clinic-quote-email" class="text-sm font-semibold text-gray-900">Email <span class="font-bold text-red-600">(obbligatoria)</span></label>
+                    <input id="clinic-quote-email" name="email" type="email" autocomplete="email" required class="mt-1 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" placeholder="nome@email.it" />
+                  </div>
+                  <div>
+                    <label for="clinic-quote-phone" class="text-sm font-semibold text-gray-900">Telefono <span class="font-normal text-gray-500">(facoltativo)</span></label>
+                    <input id="clinic-quote-phone" name="phone" type="tel" autocomplete="tel" class="mt-1 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" placeholder="+39..." />
+                  </div>
+                </div>
+                <p class="text-xs leading-5 text-gray-500">La struttura usera questi dati per risponderti direttamente.</p>
+
+                <div>
+                  <label for="clinic-quote-message" class="text-sm font-semibold text-gray-900">Richiesta</label>
+                  <textarea id="clinic-quote-message" name="message" rows="5" class="mt-1 w-full rounded-md border border-gray-300 px-3 py-2 text-base leading-6 text-gray-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100">{quoteDefaultMessage}</textarea>
+                </div>
+
+                <div class="rounded-md border border-gray-200 bg-gray-50 p-4">
+                  <label for="clinic-quote-captcha" class="text-sm font-semibold text-gray-900">Verifica anti-spam: quanto fa {captchaA} + {captchaB}?</label>
+                  <input id="clinic-quote-captcha" name="captcha_answer" type="number" inputmode="numeric" class="mt-2 min-h-12 w-full rounded-md border border-gray-300 px-3 py-2 text-base text-gray-900 outline-none focus:border-emerald-500 focus:ring-2 focus:ring-emerald-100" />
+                </div>
+
+                <label class="flex gap-3 rounded-md border border-gray-200 bg-white p-3 text-sm leading-6 text-gray-700">
+                  <input name="privacy_accepted" type="checkbox" value="true" required class="mt-1 h-5 w-5 shrink-0 rounded border-gray-300 text-emerald-600 focus:ring-emerald-500" />
+                  <span>
+                    Ho letto l'informativa privacy e autorizzo Veterinari.org a inviare questa richiesta alla struttura.
+                    <a href="/privacy-policy" target="_blank" class="font-semibold text-emerald-700 underline">Privacy policy</a>
+                  </span>
+                </label>
+
+                <div data-clinic-quote-feedback class="hidden rounded-md px-3 py-2 text-sm leading-6"></div>
+              </div>
+
+              <div class="shrink-0 border-t border-gray-100 bg-white p-4 shadow-[0_-10px_24px_rgba(15,23,42,0.08)] sm:p-6">
+                <button type="submit" class="inline-flex min-h-12 w-full items-center justify-center rounded-md bg-emerald-600 px-5 py-3 text-base font-bold text-white hover:bg-emerald-700 disabled:cursor-wait disabled:bg-emerald-300">
+                  Invia richiesta
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      </div>
+    )}
+
+    <div id="favorite-login-modal" class="fixed inset-0 z-[80] hidden bg-gray-950/60 px-4 py-6" aria-hidden="true">
+      <div class="mx-auto flex min-h-full max-w-md items-center">
+        <div class="w-full rounded-lg bg-white p-5 shadow-2xl">
+          <div class="flex items-start justify-between gap-4">
+            <div>
+              <p class="text-sm font-semibold uppercase text-emerald-700">Area Pet Lover</p>
+              <h2 class="mt-1 text-xl font-bold text-gray-950">Salva questo veterinario nella tua area</h2>
+            </div>
+            <button type="button" data-favorite-modal-close class="rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700">Chiudi</button>
+          </div>
+          <p class="mt-4 text-sm leading-6 text-gray-600">
+            Registrati gratis per creare la zampa digitale del tuo animale, ritrovare i veterinari utili e condividere i dati sanitari quando serve.
+          </p>
+          <div class="mt-5 grid gap-2 sm:grid-cols-2">
+            <a href={petLoverRegisterUrl} rel="nofollow" class="inline-flex justify-center rounded-md bg-green-600 px-4 py-3 text-sm font-bold text-white hover:bg-green-700">Registrati gratis</a>
+            <a href={petLoverLoginUrl} rel="nofollow" class="inline-flex justify-center rounded-md border border-gray-300 px-4 py-3 text-sm font-bold text-gray-800 hover:bg-gray-50">Accedi</a>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {(clinic.phone || clinic.email || hasPosition) && (
+      <div class="vet-mobile-contact-bar md:hidden" role="navigation" aria-label="Contatti rapidi">
+        <div class="mx-auto flex max-w-md gap-2 px-3 py-2">
+          {clinic.phone && (
+            <a href={`tel:${normalizePhone(clinic.phone)}`} data-clinic-id={String(clinic.id)} class={`inline-flex min-w-0 flex-1 items-center justify-center rounded-md px-3 py-3 text-sm font-bold shadow-sm ${callButtonClass}`}>
+              <Phone className="mr-2 h-5 w-5 shrink-0" aria-hidden="true" />
+              Chiama
+            </a>
+          )}
+          {clinic.email && (
+            <button type="button" data-clinic-quote-open class="inline-flex min-w-0 flex-1 items-center justify-center rounded-md bg-emerald-600 px-3 py-3 text-sm font-bold text-white shadow-sm">
+              <DollarSign className="mr-1.5 h-5 w-5 shrink-0" aria-hidden="true" />
+              Preventivo
+            </button>
+          )}
+          {hasPosition && (
+            <a href={googleDirections} data-clinic-id={String(clinic.id)} target="_blank" rel="noopener noreferrer" class="inline-flex min-w-0 flex-1 items-center justify-center rounded-md bg-gray-900 px-3 py-3 text-sm font-bold text-white shadow-sm">
+              <Navigation className="mr-2 h-5 w-5 shrink-0" aria-hidden="true" />
+              Percorso
+            </a>
+          )}
+        </div>
+      </div>
+    )}
+  </div>
+</BaseLayout>
+
+<script>
+  const contactModal = document.getElementById('contact-modal');
+  const contactForm = document.querySelector<HTMLFormElement>('[data-contact-form]');
+  const contactFeedback = document.querySelector<HTMLElement>('[data-contact-feedback]');
+  const contactPetPanel = document.querySelector<HTMLElement>('[data-contact-pet-panel]');
+  const contactPetSelect = document.querySelector<HTMLSelectElement>('#contact-pet-id');
+  const favoriteButton = document.querySelector<HTMLButtonElement>('[data-favorite-clinic]');
+  const favoriteLabel = favoriteButton?.querySelector<HTMLElement>('[data-favorite-label]');
+  const favoriteFeedback = document.querySelector<HTMLElement>('[data-favorite-feedback]');
+  const favoriteLoginModal = document.getElementById('favorite-login-modal');
+  const clinicQuoteModal = document.getElementById('clinic-quote-modal');
+  const clinicQuoteForm = document.querySelector<HTMLFormElement>('[data-clinic-quote-form]');
+  const clinicQuoteFeedback = document.querySelector<HTMLElement>('[data-clinic-quote-feedback]');
+  const clinicQuoteServiceSelect = document.querySelector<HTMLSelectElement>('#clinic-quote-service');
+  const clinicQuoteMessage = document.querySelector<HTMLTextAreaElement>('#clinic-quote-message');
+
+  const selectedClinicQuoteService = () => {
+    const option = clinicQuoteServiceSelect?.selectedOptions?.[0];
+    return {
+      slug: clinicQuoteServiceSelect?.value || '',
+      name: option?.getAttribute('data-service-name') || option?.textContent?.replace(/\s+·\s+dichiarata\s*$/i, '').trim() || 'Visita semplice',
+      averagePrice: option?.getAttribute('data-average-price') || '',
+      source: option?.getAttribute('data-source') || 'standard',
+    };
+  };
+
+  const clinicQuoteDefaultMessage = (serviceName: string) => {
+    const clinicName = clinicQuoteForm?.getAttribute('data-clinic-name') || 'la struttura';
+    const locationLabel = clinicQuoteForm?.getAttribute('data-location-label') || '';
+    return [
+      `Vorrei chiedere un preventivo per ${serviceName}${locationLabel ? ` presso ${clinicName} a ${locationLabel}` : ` presso ${clinicName}`}.`,
+      'Potete indicarmi disponibilita, prezzo indicativo e tempi?',
+      '',
+      'Grazie',
+    ].join('\n');
+  };
+
+  const updateClinicQuoteMessage = () => {
+    if (!clinicQuoteMessage) return;
+    const service = selectedClinicQuoteService();
+    clinicQuoteMessage.value = clinicQuoteDefaultMessage(service.name);
+  };
+
+  const setFavoriteUi = (favorited: boolean) => {
+    if (!favoriteButton || !favoriteLabel) return;
+    favoriteButton.setAttribute('aria-pressed', String(favorited));
+    favoriteButton.classList.toggle('border-rose-600', favorited);
+    favoriteButton.classList.toggle('bg-rose-600', favorited);
+    favoriteButton.classList.toggle('text-white', favorited);
+    favoriteButton.classList.toggle('border-rose-200', !favorited);
+    favoriteButton.classList.toggle('bg-white', !favorited);
+    favoriteButton.classList.toggle('text-rose-700', !favorited);
+    favoriteLabel.textContent = favorited ? 'Salvato nei preferiti' : 'Salva tra i preferiti';
+  };
+
+  const showFavoriteFeedback = (message: string) => {
+    if (!favoriteFeedback) return;
+    favoriteFeedback.textContent = message;
+    favoriteFeedback.classList.remove('hidden');
+    window.setTimeout(() => favoriteFeedback.classList.add('hidden'), 3500);
+  };
+
+  const openFavoriteLoginModal = () => {
+    if (!favoriteLoginModal) return;
+    favoriteLoginModal.classList.remove('hidden');
+    favoriteLoginModal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('overflow-hidden');
+  };
+
+  const closeFavoriteLoginModal = () => {
+    if (!favoriteLoginModal) return;
+    favoriteLoginModal.classList.add('hidden');
+    favoriteLoginModal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('overflow-hidden');
+  };
+
+  const showContactFeedback = (message: string, type: 'success' | 'error' = 'success') => {
+    if (!contactFeedback) return;
+    contactFeedback.textContent = message;
+    contactFeedback.classList.remove('hidden', 'bg-green-50', 'text-green-800', 'bg-red-50', 'text-red-800');
+    contactFeedback.classList.add(type === 'success' ? 'bg-green-50' : 'bg-red-50', type === 'success' ? 'text-green-800' : 'text-red-800');
+  };
+
+  const showClinicQuoteFeedback = (message: string, type: 'success' | 'error' = 'success') => {
+    if (!clinicQuoteFeedback) return;
+    clinicQuoteFeedback.textContent = message;
+    clinicQuoteFeedback.classList.remove('hidden', 'bg-green-50', 'text-green-800', 'bg-red-50', 'text-red-800');
+    clinicQuoteFeedback.classList.add(type === 'success' ? 'bg-green-50' : 'bg-red-50', type === 'success' ? 'text-green-800' : 'text-red-800');
+  };
+
+  const openContactModal = () => {
+    if (!contactModal) return;
+    contactModal.classList.remove('hidden');
+    contactModal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('overflow-hidden');
+    contactForm?.querySelector<HTMLInputElement>('input[name="name"]')?.focus();
+  };
+
+  const closeContactModal = () => {
+    if (!contactModal) return;
+    contactModal.classList.add('hidden');
+    contactModal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('overflow-hidden');
+  };
+
+  const trackClinicQuoteOpen = () => {
+    const service = selectedClinicQuoteService();
+    const clinicId = clinicQuoteForm?.getAttribute('data-clinic-id') || '';
+    const virtualPath = `${window.location.pathname}#preventivo/${service.slug || 'visita-semplice'}`;
+    if (typeof (window as any).gtag === 'function') {
+      (window as any).gtag('event', 'page_view', {
+        page_title: `Preventivo ${service.name}`,
+        page_path: virtualPath,
+        page_location: `${window.location.origin}${virtualPath}`,
+      });
+      (window as any).gtag('event', 'quote_request_open', {
+        service_slug: service.slug,
+        service_name: service.name,
+        clinic_id: clinicId,
+        trigger: 'clinic-sticky-mobile',
+        page_path: virtualPath,
+      });
+    }
+    fetch('/api/quote-funnel-event', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({
+        event_type: 'quote_request_open',
+        service_slug: service.slug || 'visita-semplice',
+        service_name: service.name,
+        location_label: clinicQuoteForm?.getAttribute('data-location-label') || '',
+        page_path: virtualPath,
+        selected_clinic_count: 1,
+        selected_clinic_id: clinicId,
+        trigger: 'clinic-sticky-mobile',
+        page_location: window.location.href,
+      }),
+    }).catch(() => null);
+  };
+
+  const openClinicQuoteModal = () => {
+    if (!clinicQuoteModal) return;
+    updateClinicQuoteMessage();
+    clinicQuoteModal.classList.remove('hidden');
+    clinicQuoteModal.setAttribute('aria-hidden', 'false');
+    document.body.classList.add('overflow-hidden');
+    trackClinicQuoteOpen();
+    clinicQuoteServiceSelect?.focus();
+  };
+
+  const closeClinicQuoteModal = () => {
+    if (!clinicQuoteModal) return;
+    clinicQuoteModal.classList.add('hidden');
+    clinicQuoteModal.setAttribute('aria-hidden', 'true');
+    document.body.classList.remove('overflow-hidden');
+  };
+
+  document.querySelectorAll<HTMLElement>('[data-contact-open]').forEach((button) => {
+    button.addEventListener('click', openContactModal);
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-contact-close]').forEach((button) => {
+    button.addEventListener('click', closeContactModal);
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-clinic-quote-open]').forEach((button) => {
+    button.addEventListener('click', openClinicQuoteModal);
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-clinic-quote-close]').forEach((button) => {
+    button.addEventListener('click', closeClinicQuoteModal);
+  });
+
+  clinicQuoteServiceSelect?.addEventListener('change', () => {
+    updateClinicQuoteMessage();
+    trackClinicQuoteOpen();
+  });
+
+  document.querySelectorAll<HTMLElement>('[data-favorite-modal-close]').forEach((button) => {
+    button.addEventListener('click', closeFavoriteLoginModal);
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key === 'Escape') closeContactModal();
+    if (event.key === 'Escape') closeClinicQuoteModal();
+    if (event.key === 'Escape') closeFavoriteLoginModal();
+  });
+
+  if (favoriteButton) {
+    const clinicId = favoriteButton.dataset.clinicId || '';
+    fetch('/api/pet-lover', { credentials: 'same-origin' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => {
+        const favorites = payload?.data?.favorite_clinics || [];
+        setFavoriteUi(favorites.some((clinic: any) => String(clinic.id) === clinicId));
+      })
+      .catch(() => null);
+
+    favoriteButton.addEventListener('click', async () => {
+      favoriteButton.setAttribute('disabled', 'true');
+      try {
+        const response = await fetch('/api/pet-lover', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'toggle_favorite_clinic', clinic_id: clinicId }),
+        });
+        const payload = await response.json().catch(() => ({}));
+        if (response.status === 401) {
+          openFavoriteLoginModal();
+          return;
+        }
+        if (!response.ok || payload.success === false) throw new Error(payload.error || 'Preferito non salvato.');
+        setFavoriteUi(Boolean(payload.favorited));
+        showFavoriteFeedback(payload.favorited ? 'Aggiunto ai tuoi veterinari preferiti.' : 'Rimosso dai preferiti.');
+      } catch (error: any) {
+        showFavoriteFeedback(error?.message || 'Operazione non riuscita.');
+      } finally {
+        favoriteButton.removeAttribute('disabled');
+      }
+    });
+  }
+
+  if (contactForm) {
+    fetch('/api/local-auth?action=session', { credentials: 'same-origin' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => {
+        const sessionUser = payload?.session?.user;
+        if (!sessionUser) return;
+        const metadata = sessionUser.user_metadata || {};
+        const nameInput = contactForm.querySelector<HTMLInputElement>('input[name="name"]');
+        const emailInput = contactForm.querySelector<HTMLInputElement>('input[name="email"]');
+        const phoneInput = contactForm.querySelector<HTMLInputElement>('input[name="phone"]');
+        if (nameInput && !nameInput.value) nameInput.value = metadata.full_name || '';
+        if (emailInput && !emailInput.value) emailInput.value = sessionUser.email || '';
+        if (phoneInput && !phoneInput.value) phoneInput.value = metadata.phone || '';
+
+        return fetch('/api/pet-lover', { credentials: 'same-origin' });
+      })
+      .then((response) => response && response.ok ? response.json() : null)
+      .then((payload) => {
+        const pets = payload?.data?.pets || [];
+        if (!pets.length || !contactPetPanel || !contactPetSelect) return;
+        pets.forEach((pet: any) => {
+          const option = document.createElement('option');
+          option.value = pet.id;
+          option.textContent = `${pet.name} (${pet.species || 'animale'})`;
+          contactPetSelect.appendChild(option);
+        });
+        contactPetPanel.classList.remove('hidden');
+      })
+      .catch(() => null);
+
+    contactForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const submitButton = contactForm.querySelector<HTMLButtonElement>('button[type="submit"]');
+      const formData = new FormData(contactForm);
+
+      submitButton?.setAttribute('disabled', 'true');
+      showContactFeedback('Invio richiesta in corso...', 'success');
+
+      try {
+        let finalMessage = String(formData.get('message') || '');
+        const selectedPetId = String(formData.get('pet_id') || '');
+        if (selectedPetId) {
+          const shareResponse = await fetch('/api/pet-lover', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            credentials: 'same-origin',
+            body: JSON.stringify({ action: 'create_share_link', pet_id: selectedPetId, scopes: ['base', 'health'] }),
+          });
+          const shareResult = await shareResponse.json().catch(() => ({}));
+          if (shareResponse.ok && shareResult?.token) {
+            finalMessage = `${finalMessage}\n\nScheda animale condivisa: ${window.location.origin}/pet-share/${shareResult.token}`;
+          }
+        }
+
+        const response = await fetch('/api/contact-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            clinic_id: formData.get('clinic_id'),
+            clinic_name: formData.get('clinic_name'),
+            name: formData.get('name'),
+            email: formData.get('email'),
+            phone: formData.get('phone'),
+            message: finalMessage,
+            captcha_answer: formData.get('captcha_answer'),
+            captcha_token: formData.get('captcha_token'),
+            privacy_accepted: formData.get('privacy_accepted') === 'true',
+            company: formData.get('company'),
+          }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) throw new Error(result.error || 'Richiesta non inviata.');
+        if (typeof (window as any).gtag === 'function') {
+          (window as any).gtag('event', 'contact_request_submit', {
+            request_id: result.request_id || '',
+            clinic_id: formData.get('clinic_id') || '',
+            clinic_name: formData.get('clinic_name') || '',
+            page_path: window.location.pathname,
+          });
+        }
+        showContactFeedback('Richiesta inviata. La struttura potra ricontattarti direttamente.', 'success');
+        contactForm.reset();
+      } catch (error: any) {
+        showContactFeedback(error?.message || 'Errore durante l invio della richiesta.', 'error');
+      } finally {
+        submitButton?.removeAttribute('disabled');
+      }
+    });
+  }
+
+  if (clinicQuoteForm) {
+    fetch('/api/local-auth?action=session', { credentials: 'same-origin' })
+      .then((response) => response.ok ? response.json() : null)
+      .then((payload) => {
+        const sessionUser = payload?.session?.user;
+        if (!sessionUser) return;
+        const metadata = sessionUser.user_metadata || {};
+        const nameInput = clinicQuoteForm.querySelector<HTMLInputElement>('input[name="name"]');
+        const emailInput = clinicQuoteForm.querySelector<HTMLInputElement>('input[name="email"]');
+        const phoneInput = clinicQuoteForm.querySelector<HTMLInputElement>('input[name="phone"]');
+        if (nameInput && !nameInput.value) nameInput.value = metadata.full_name || '';
+        if (emailInput && !emailInput.value) emailInput.value = sessionUser.email || '';
+        if (phoneInput && !phoneInput.value) phoneInput.value = metadata.phone || '';
+      })
+      .catch(() => null);
+
+    clinicQuoteForm.addEventListener('submit', async (event) => {
+      event.preventDefault();
+      const submitButton = clinicQuoteForm.querySelector<HTMLButtonElement>('button[type="submit"]');
+      const formData = new FormData(clinicQuoteForm);
+      const service = selectedClinicQuoteService();
+      const clinicId = clinicQuoteForm.getAttribute('data-clinic-id') || '';
+      const clinicName = clinicQuoteForm.getAttribute('data-clinic-name') || '';
+      const locationLabel = clinicQuoteForm.getAttribute('data-location-label') || '';
+      const sourcePath = clinicQuoteForm.getAttribute('data-source-path') || window.location.pathname;
+
+      submitButton?.setAttribute('disabled', 'true');
+      showClinicQuoteFeedback('Invio preventivo in corso...', 'success');
+
+      try {
+        const email = String(formData.get('email') || '').trim();
+        if (!email.includes('@')) {
+          clinicQuoteForm.querySelector<HTMLInputElement>('input[name="email"]')?.focus();
+          throw new Error('Inserisci una email valida.');
+        }
+
+        const response = await fetch('/api/quote-request', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          credentials: 'same-origin',
+          body: JSON.stringify({
+            service_slug: service.slug,
+            service_name: service.name,
+            location_label: locationLabel,
+            average_price: service.averagePrice || null,
+            source_path: sourcePath,
+            name: formData.get('name'),
+            email,
+            phone: formData.get('phone'),
+            message: formData.get('message'),
+            captcha_answer: formData.get('captcha_answer'),
+            captcha_token: formData.get('captcha_token'),
+            privacy_accepted: formData.get('privacy_accepted') === 'true',
+            company: formData.get('company'),
+            clinic_ids: [clinicId],
+            clinic_matches: [{ id: clinicId, result_type: service.source === 'declared' ? 'declared' : 'profile_request', result_label: clinicName }],
+          }),
+        });
+        const result = await response.json().catch(() => ({}));
+        if (!response.ok || !result.success) throw new Error(result.error || 'Preventivo non inviato.');
+        if (typeof (window as any).gtag === 'function') {
+          (window as any).gtag('event', 'quote_request_submit', {
+            request_id: result.request_id || '',
+            service_slug: service.slug,
+            service_name: service.name,
+            clinic_id: clinicId,
+            clinic_name: clinicName,
+            source: 'clinic_profile_mobile',
+            page_path: window.location.pathname,
+          });
+        }
+        showClinicQuoteFeedback(result.duplicate ? 'Richiesta gia inviata pochi minuti fa: non l abbiamo reinviata.' : 'Richiesta inviata. La struttura potra risponderti direttamente.', 'success');
+        clinicQuoteForm.reset();
+        updateClinicQuoteMessage();
+      } catch (error: any) {
+        showClinicQuoteFeedback(error?.message || 'Errore durante l invio del preventivo.', 'error');
+      } finally {
+        submitButton?.removeAttribute('disabled');
+      }
+    });
+  }
+</script>
+
+<style>
+  .vet-detail-hero {
+    height: 12rem;
+    overflow: hidden;
+  }
+
+  .vet-detail-hero img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: center;
+  }
+
+  .vet-detail-hero-overlay {
+    background:
+      linear-gradient(180deg, rgba(0, 0, 0, 0.04) 0%, rgba(0, 0, 0, 0.10) 100%);
+  }
+
+  .vet-detail-hero-title {
+    text-shadow: 0 2px 14px rgba(0, 0, 0, 0.55);
+  }
+
+  .vet-detail-status {
+    display: flex;
+    max-width: min(100%, 46rem);
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    line-height: 1.35;
+  }
+
+  .vet-detail-map {
+    height: 20rem;
+    filter: saturate(1.28) contrast(1.08);
+  }
+
+  .vet-detail-map-wrap {
+    overflow: hidden;
+    background: #eef2f7;
+  }
+
+  .vet-mobile-contact-bar {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 0;
+    z-index: 60;
+    border-top: 1px solid rgba(226, 232, 240, 0.95);
+    background: rgba(255, 255, 255, 0.96);
+    box-shadow: 0 -10px 30px rgba(15, 23, 42, 0.16);
+    backdrop-filter: blur(14px);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  @media (min-width: 640px) {
+    .vet-detail-hero {
+      height: 18rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .vet-detail-hero {
+      height: 20rem;
+    }
+
+    .vet-detail-map {
+      height: 22rem;
+    }
+  }
+</style>

@@ -1,0 +1,546 @@
+---
+import { ArrowLeft, ExternalLink, MapPin, Navigation, Search } from 'lucide-react';
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+import { serviceHasAnimalContext, serviceNameForAnimalSeo, serviceNameForAnimalTitle, servicePlainLanguageExplanation } from '@/lib/service-seo';
+import { supabasePublicServer } from '@/lib/supabase';
+
+interface Props {
+  serviceSlug: string;
+}
+
+const { serviceSlug } = Astro.props;
+
+function cleanText(value: unknown) {
+  return typeof value === 'string' ? value.replace(/"/g, '').trim() : '';
+}
+
+function slugify(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .trim()
+    .replace(/\s+/g, '-')
+    .replace(/-+/g, '-');
+}
+
+function serviceSlugAliases(value: unknown) {
+  const base = slugify(value);
+  const compact = cleanText(value)
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9\s-]/g, '')
+    .replace(/[\s-]+/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-+|-+$/g, '');
+
+  return Array.from(new Set([base, compact].filter(Boolean)));
+}
+
+function formatCurrency(value: unknown) {
+  const price = Number(value);
+  return Number.isFinite(price) ? `${price.toFixed(0)} €` : null;
+}
+
+function titleCaseServiceName(value: unknown) {
+  return cleanText(value)
+    .toLowerCase()
+    .split(/(\s+|-|\/)/)
+    .map((part) => /^[a-zà-ÿ]/i.test(part) ? part.charAt(0).toUpperCase() + part.slice(1) : part)
+    .join('');
+}
+
+function sanitizeServiceHtml(value: unknown) {
+  if (typeof value !== 'string') return '';
+  return value
+    .replace(/<!doctype[^>]*>/gi, '')
+    .replace(/<html[^>]*>/gi, '')
+    .replace(/<\/html>/gi, '')
+    .replace(/<head[^>]*>[\s\S]*?<\/head>/gi, '')
+    .replace(/<body[^>]*>/gi, '')
+    .replace(/<\/body>/gi, '')
+    .replace(/<title[^>]*>[\s\S]*?<\/title>/gi, '')
+    .replace(/<meta[^>]*>/gi, '')
+    .replace(/<link[^>]*>/gi, '')
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+    .trim();
+}
+
+function splitFirstHeading(value: string) {
+  const match = value.match(/<h1\b[^>]*>[\s\S]*?<\/h1>/i);
+  if (!match || typeof match.index !== 'number') {
+    return { headingHtml: '', bodyHtml: value };
+  }
+  return {
+    headingHtml: match[0],
+    bodyHtml: `${value.slice(0, match.index)}${value.slice(match.index + match[0].length)}`.trim(),
+  };
+}
+
+function stripHtml(value: string) {
+  return value
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function extractFaqItems(value: string) {
+  const marker = value.search(/<h2\b[^>]*>\s*Domande frequenti\s*<\/h2>/i);
+  if (marker < 0) return [];
+  const html = value.slice(marker);
+  const matches = Array.from(html.matchAll(/<h3\b[^>]*>([\s\S]*?)<\/h3>\s*<p\b[^>]*>([\s\S]*?)<\/p>/gi));
+  return matches
+    .map((match) => ({
+      question: stripHtml(match[1]),
+      answer: stripHtml(match[2]),
+    }))
+    .filter((item) => item.question && item.answer)
+    .slice(0, 8);
+}
+
+async function loadServices() {
+  if (!supabasePublicServer) return [];
+  const { data, error } = await supabasePublicServer
+    .from('services_taxonomy')
+    .select('id, name, category, html_content, image_url, average_price, allow_price')
+    .limit(500);
+
+  if (error) {
+    console.error('Errore caricamento descrizione servizio:', error.message);
+    return [];
+  }
+
+  return data ?? [];
+}
+
+const services = await loadServices();
+const service = services.find((item: any) => serviceSlugAliases(item.name).includes(serviceSlug));
+const relatedServices = service
+  ? services
+      .filter((item: any) => item.id !== service.id && cleanText(item.category) === cleanText(service.category))
+      .slice(0, 4)
+      .map((item: any) => ({ name: cleanText(item.name), slug: slugify(item.name), category: cleanText(item.category) }))
+  : [];
+
+const mainCities = [
+  { name: 'Milano', province: 'MI' },
+  { name: 'Roma', province: 'RM' },
+  { name: 'Torino', province: 'TO' },
+  { name: 'Napoli', province: 'NA' },
+  { name: 'Firenze', province: 'FI' },
+  { name: 'Bologna', province: 'BO' },
+];
+
+const serviceName = titleCaseServiceName(cleanText(service?.name) || 'Servizio veterinario');
+const seoServiceName = serviceNameForAnimalSeo(serviceName);
+const seoTitleServiceName = serviceNameForAnimalTitle(serviceName);
+const serviceIsAnimalSpecific = serviceHasAnimalContext(serviceName);
+const plainLanguageExplanation = servicePlainLanguageExplanation(serviceName);
+const category = cleanText(service?.category) || 'Servizio veterinario';
+const imageUrl = cleanText(service?.image_url) || '/favicon.svg';
+const averagePrice = formatCurrency(service?.average_price);
+const serviceHtml = sanitizeServiceHtml(service?.html_content);
+const { bodyHtml } = splitFirstHeading(serviceHtml);
+const faqItems = extractFaqItems(serviceHtml);
+const title = service
+  ? `${seoTitleServiceName}: costo, prezzi e guida veterinaria | ${siteConfig.name}`
+  : `Servizio non trovato | ${siteConfig.name}`;
+const seoDescriptionServiceName = plainLanguageExplanation
+  ? `${seoServiceName.toLowerCase()}, cioe ${plainLanguageExplanation}`
+  : seoServiceName.toLowerCase();
+const description = service
+  ? `Scopri quanto costa ${seoDescriptionServiceName}: prezzo medio indicativo, preparazione e cliniche veterinarie${serviceIsAnimalSpecific ? '.' : ' per cani, gatti e altri animali domestici.'}`
+  : 'La descrizione della prestazione richiesta non e ancora disponibile.';
+const canonical = `${siteConfig.url}/quanto-costa/${serviceSlug}`;
+
+const articleLd = service ? {
+  '@context': 'https://schema.org',
+  '@type': 'Article',
+  headline: seoServiceName,
+  description,
+  image: imageUrl,
+  author: { '@type': 'Organization', name: siteConfig.name },
+  publisher: { '@type': 'Organization', name: siteConfig.name },
+  mainEntityOfPage: canonical,
+  about: { '@type': 'Thing', name: seoServiceName, category },
+} : null;
+
+const serviceLd = service ? {
+  '@context': 'https://schema.org',
+  '@type': 'Service',
+  name: seoServiceName,
+  description,
+  serviceType: category,
+  provider: { '@type': 'Organization', name: 'Cliniche Veterinarie' },
+  areaServed: { '@type': 'Country', name: 'Italia' },
+  offers: service.average_price ? {
+    '@type': 'Offer',
+    price: Number(service.average_price),
+    priceCurrency: 'EUR',
+  } : undefined,
+} : null;
+
+const breadcrumbLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: siteConfig.name, item: siteConfig.url },
+    { '@type': 'ListItem', position: 2, name: 'Quanto Costa?', item: `${siteConfig.url}/quanto-costa` },
+    { '@type': 'ListItem', position: 3, name: seoServiceName, item: canonical },
+  ],
+};
+
+const faqLd = faqItems.length ? {
+  '@context': 'https://schema.org',
+  '@type': 'FAQPage',
+  mainEntity: faqItems.map((item) => ({
+    '@type': 'Question',
+    name: item.question,
+    acceptedAnswer: {
+      '@type': 'Answer',
+      text: item.answer,
+    },
+  })),
+} : null;
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  canonical={canonical}
+  ogImage={imageUrl}
+  ogType="article"
+  jsonLd={[articleLd, serviceLd, breadcrumbLd, faqLd].filter(Boolean)}
+>
+  <div class="min-h-screen bg-gray-50">
+    <div class="mx-auto max-w-4xl px-4 py-8 sm:px-6 lg:px-8">
+      <nav class="mb-6 flex flex-wrap items-center gap-2 text-sm text-gray-600" aria-label="Breadcrumb">
+        <a href="/" class="hover:text-green-600">Home</a>
+        <span>/</span>
+        <a href="/quanto-costa" class="hover:text-green-600">Quanto Costa?</a>
+        <span>/</span>
+        <span class="font-medium text-gray-800">{serviceName}</span>
+      </nav>
+
+      <a href="/quanto-costa" class="mb-6 inline-flex items-center rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-white">
+        <ArrowLeft className="mr-2 h-4 w-4" aria-hidden="true" />
+        Torna a Quanto Costa
+      </a>
+
+      {service ? (
+        <article class="overflow-hidden rounded-lg bg-white shadow-lg">
+          <div class="h-64 w-full overflow-hidden bg-gradient-to-br from-green-100 to-blue-100 md:h-96">
+            <img src={imageUrl} alt={serviceName} class="h-full w-full object-cover" loading="eager" />
+          </div>
+          <div class="p-6 md:p-8">
+            <div class="mb-6 flex flex-wrap items-center gap-3">
+              <span class="rounded-full bg-indigo-50 px-3 py-1 text-sm font-semibold text-indigo-700">{category}</span>
+              {averagePrice && <span class="rounded-full bg-green-50 px-3 py-1 text-sm font-semibold text-green-700">Prezzo medio: {averagePrice}</span>}
+            </div>
+
+            <p class="mb-2 text-sm font-bold uppercase text-green-700">
+              {serviceIsAnimalSpecific ? 'Prestazione veterinaria specifica' : 'Prestazione veterinaria per animali domestici'}
+            </p>
+
+            {serviceHtml ? (
+              <>
+                <div class="service-content">
+                  <h1>{seoServiceName}</h1>
+                </div>
+
+                <section class="mb-8 rounded-lg border border-green-200 bg-green-50 p-5 sm:p-6" data-service-clinic-search data-service-slug={serviceSlug}>
+                  <div class="mb-4">
+                    <h2 class="text-2xl font-bold text-gray-900">Cerca cliniche disponibili</h2>
+                    <p class="mt-2 text-base leading-7 text-gray-700">
+                      Trova strutture che dichiarano {serviceName.toLowerCase()} o cliniche vicine da contattare per prezzo, disponibilita e preventivo.
+                    </p>
+                  </div>
+                  <form class="grid gap-3 md:grid-cols-[1fr_auto_auto]" data-service-search-form>
+                    <label class="block">
+                      <span class="mb-2 block text-sm font-bold text-gray-800">Dove?</span>
+                      <span class="flex min-h-[52px] items-center rounded-lg border border-gray-300 bg-white px-3 focus-within:border-green-600 focus-within:ring-2 focus-within:ring-green-100">
+                        <MapPin className="mr-2 h-5 w-5 shrink-0 text-gray-400" aria-hidden="true" />
+                        <input
+                          type="text"
+                          name="location"
+                          autocomplete="address-level2"
+                          class="min-h-[50px] w-full border-0 bg-transparent text-base text-gray-900 outline-none placeholder:text-gray-400"
+                          placeholder="Es. Milano, Roma, Torino"
+                        />
+                      </span>
+                    </label>
+                    <button type="submit" class="mt-auto inline-flex min-h-[52px] items-center justify-center rounded-lg bg-green-600 px-5 py-3 text-base font-bold text-white transition hover:bg-green-700">
+                      <Search className="mr-2 h-5 w-5" aria-hidden="true" />
+                      Cerca
+                    </button>
+                    <button type="button" class="mt-auto inline-flex min-h-[52px] items-center justify-center rounded-lg border border-green-700 bg-white px-5 py-3 text-base font-bold text-green-700 transition hover:bg-green-100" data-service-near-me>
+                      <Navigation className="mr-2 h-5 w-5" aria-hidden="true" />
+                      Vicino a te
+                    </button>
+                  </form>
+                  <p class="mt-3 hidden text-sm font-semibold text-gray-700" data-service-search-message></p>
+                </section>
+
+                {bodyHtml && <div class="service-content" set:html={bodyHtml} />}
+              </>
+            ) : (
+              <>
+                <div class="service-content">
+                  <h1>{seoServiceName}</h1>
+                </div>
+                <section class="mb-8 rounded-lg border border-green-200 bg-green-50 p-5 sm:p-6" data-service-clinic-search data-service-slug={serviceSlug}>
+                  <div class="mb-4">
+                    <h2 class="text-2xl font-bold text-gray-900">Cerca cliniche disponibili</h2>
+                    <p class="mt-2 text-base leading-7 text-gray-700">
+                      Trova strutture che dichiarano {serviceName.toLowerCase()} o cliniche vicine da contattare per prezzo, disponibilita e preventivo.
+                    </p>
+                  </div>
+                  <form class="grid gap-3 md:grid-cols-[1fr_auto_auto]" data-service-search-form>
+                    <label class="block">
+                      <span class="mb-2 block text-sm font-bold text-gray-800">Dove?</span>
+                      <span class="flex min-h-[52px] items-center rounded-lg border border-gray-300 bg-white px-3 focus-within:border-green-600 focus-within:ring-2 focus-within:ring-green-100">
+                        <MapPin className="mr-2 h-5 w-5 shrink-0 text-gray-400" aria-hidden="true" />
+                        <input
+                          type="text"
+                          name="location"
+                          autocomplete="address-level2"
+                          class="min-h-[50px] w-full border-0 bg-transparent text-base text-gray-900 outline-none placeholder:text-gray-400"
+                          placeholder="Es. Milano, Roma, Torino"
+                        />
+                      </span>
+                    </label>
+                    <button type="submit" class="mt-auto inline-flex min-h-[52px] items-center justify-center rounded-lg bg-green-600 px-5 py-3 text-base font-bold text-white transition hover:bg-green-700">
+                      <Search className="mr-2 h-5 w-5" aria-hidden="true" />
+                      Cerca
+                    </button>
+                    <button type="button" class="mt-auto inline-flex min-h-[52px] items-center justify-center rounded-lg border border-green-700 bg-white px-5 py-3 text-base font-bold text-green-700 transition hover:bg-green-100" data-service-near-me>
+                      <Navigation className="mr-2 h-5 w-5" aria-hidden="true" />
+                      Vicino a te
+                    </button>
+                  </form>
+                  <p class="mt-3 hidden text-sm font-semibold text-gray-700" data-service-search-message></p>
+                </section>
+                <div class="service-content">
+                  <p>La descrizione completa di questa prestazione non e ancora disponibile. Puoi comunque consultare le cliniche che hanno pubblicato prezzi o richiedere informazioni direttamente alle strutture.</p>
+                </div>
+              </>
+            )}
+
+            <section class="mt-8 border-t border-gray-200 pt-8">
+              <h2 class="mb-4 text-2xl font-bold">Trova cliniche per {serviceName}</h2>
+              <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                {mainCities.map((city) => (
+                  <a href={`/quanto-costa/${slugify(city.name)}-${city.province.toLowerCase()}/${serviceSlug}/cliniche`} class="flex items-center gap-2 rounded-lg border border-gray-200 p-3 transition hover:border-green-600 hover:bg-green-50">
+                    <MapPin className="h-5 w-5 text-green-600" aria-hidden="true" />
+                    <span class="text-gray-700">{serviceName} a {city.name}</span>
+                    <ExternalLink className="ml-auto h-4 w-4 text-gray-400" aria-hidden="true" />
+                  </a>
+                ))}
+              </div>
+            </section>
+
+            {relatedServices.length > 0 && (
+              <section class="mt-8 border-t border-gray-200 pt-8">
+                <h2 class="mb-4 text-2xl font-bold">Altre prestazioni correlate</h2>
+                <div class="grid grid-cols-1 gap-3 md:grid-cols-2">
+                  {relatedServices.map((related) => (
+                    <a href={`/quanto-costa/${related.slug}`} class="rounded-lg border border-gray-200 p-3 transition hover:border-green-600 hover:bg-green-50">
+                      <div class="font-semibold text-gray-800">{related.name}</div>
+                      <div class="mt-1 text-sm text-gray-500">{related.category}</div>
+                    </a>
+                  ))}
+                </div>
+              </section>
+            )}
+          </div>
+        </article>
+      ) : (
+        <div class="rounded-lg bg-white p-10 text-center shadow-lg">
+          <h1 class="mb-4 text-2xl font-bold text-gray-800">Servizio non trovato</h1>
+          <p class="text-gray-600">La descrizione per questo servizio non e ancora disponibile.</p>
+        </div>
+      )}
+    </div>
+  </div>
+</BaseLayout>
+
+<script is:inline>
+  (() => {
+    const slugify = (value) => String(value || '')
+      .toLowerCase()
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .replace(/[^a-z0-9\s-]/g, '')
+      .trim()
+      .replace(/\s+/g, '-')
+      .replace(/-+/g, '-');
+
+    const setMessage = (box, text) => {
+      const message = box.querySelector('[data-service-search-message]');
+      if (!message) return;
+      message.textContent = text || '';
+      message.classList.toggle('hidden', !text);
+    };
+
+    const provinceFromAddress = (address) => {
+      const iso = address?.['ISO3166-2-lvl6'] || address?.['ISO3166-2-lvl4'] || '';
+      const code = String(iso).split('-').pop();
+      return /^[A-Za-z]{2}$/.test(code) ? code.toLowerCase() : '';
+    };
+
+    const locationSlugFromAddress = (address, fallback) => {
+      const city = address?.city || address?.town || address?.village || address?.municipality || address?.county || fallback;
+      const citySlug = slugify(city);
+      const province = provinceFromAddress(address);
+      return citySlug && province ? `${citySlug}-${province}` : citySlug;
+    };
+
+    const reverseGeocode = async (lat, lon) => {
+      const url = new URL('https://nominatim.openstreetmap.org/reverse');
+      url.searchParams.set('format', 'jsonv2');
+      url.searchParams.set('lat', lat);
+      url.searchParams.set('lon', lon);
+      url.searchParams.set('addressdetails', '1');
+      const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error('reverse_geocode_failed');
+      return response.json();
+    };
+
+    const geocodeLocation = async (query) => {
+      const url = new URL('https://nominatim.openstreetmap.org/search');
+      url.searchParams.set('format', 'jsonv2');
+      url.searchParams.set('countrycodes', 'it');
+      url.searchParams.set('limit', '1');
+      url.searchParams.set('addressdetails', '1');
+      url.searchParams.set('q', query);
+      const response = await fetch(url.toString(), { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error('geocode_failed');
+      const data = await response.json();
+      return Array.isArray(data) ? data[0] : null;
+    };
+
+    const goToSearch = (serviceSlug, locationSlug) => {
+      if (!serviceSlug || !locationSlug) return;
+      window.location.href = `/quanto-costa/${locationSlug}/${serviceSlug}/cliniche`;
+    };
+
+    document.querySelectorAll('[data-service-clinic-search]').forEach((box) => {
+      const form = box.querySelector('[data-service-search-form]');
+      const nearMeButton = box.querySelector('[data-service-near-me]');
+      const input = box.querySelector('input[name="location"]');
+      const serviceSlug = box.getAttribute('data-service-slug');
+
+      form?.addEventListener('submit', async (event) => {
+        event.preventDefault();
+        const value = input?.value?.trim();
+        if (!value) {
+          setMessage(box, 'Inserisci una localita oppure usa la ricerca vicino a te.');
+          input?.focus();
+          return;
+        }
+
+        setMessage(box, 'Cerco la localita...');
+        try {
+          const result = await geocodeLocation(value);
+          const locationSlug = result ? locationSlugFromAddress(result.address, value) : slugify(value);
+          goToSearch(serviceSlug, locationSlug || slugify(value));
+        } catch {
+          goToSearch(serviceSlug, slugify(value));
+        }
+      });
+
+      nearMeButton?.addEventListener('click', () => {
+        if (!navigator.geolocation) {
+          setMessage(box, 'Geolocalizzazione non disponibile. Inserisci una localita.');
+          return;
+        }
+
+        setMessage(box, 'Rilevo la tua posizione...');
+        nearMeButton.disabled = true;
+        navigator.geolocation.getCurrentPosition(async (position) => {
+          try {
+            const result = await reverseGeocode(position.coords.latitude, position.coords.longitude);
+            const locationSlug = locationSlugFromAddress(result.address, result.display_name);
+            if (!locationSlug) throw new Error('missing_location');
+            goToSearch(serviceSlug, locationSlug);
+          } catch {
+            setMessage(box, 'Non riesco a riconoscere la localita. Scrivila nel campo Dove.');
+            nearMeButton.disabled = false;
+          }
+        }, () => {
+          setMessage(box, 'Permesso posizione non concesso. Inserisci una localita.');
+          nearMeButton.disabled = false;
+        }, { enableHighAccuracy: false, timeout: 10000, maximumAge: 300000 });
+      });
+    });
+  })();
+</script>
+
+<style>
+  .service-content {
+    color: #374151;
+    font-size: 1.125rem;
+    line-height: 1.75rem;
+  }
+
+  .service-content :global(h1) {
+    margin: 0 0 1.5rem;
+    border-bottom: 2px solid #0fa958;
+    padding-bottom: 0.75rem;
+    color: #111827;
+    font-size: 2.25rem;
+    font-weight: 700;
+    line-height: 2.5rem;
+  }
+
+  .service-content :global(h2) {
+    margin: 2rem 0 1rem;
+    color: #1f2937;
+    font-size: 1.875rem;
+    font-weight: 700;
+    line-height: 2.25rem;
+  }
+
+  .service-content :global(h3) {
+    margin: 1.5rem 0 0.75rem;
+    color: #374151;
+    font-size: 1.5rem;
+    font-weight: 600;
+    line-height: 2rem;
+  }
+
+  .service-content :global(p) {
+    margin-bottom: 1rem;
+    color: #374151;
+    line-height: 1.75rem;
+  }
+
+  .service-content :global(ul),
+  .service-content :global(ol) {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+  }
+
+  .service-content :global(ul) {
+    list-style-type: disc;
+  }
+
+  .service-content :global(ol) {
+    list-style-type: decimal;
+  }
+
+  .service-content :global(li) {
+    margin-bottom: 0.5rem;
+  }
+
+  .service-content :global(a) {
+    color: #0fa958;
+  }
+</style>

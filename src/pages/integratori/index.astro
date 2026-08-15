@@ -1,0 +1,17 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import IntegratoriApp from '@/components/react/IntegratoriApp.jsx';
+import { absoluteUrl, siteConfig } from '@/config/site';
+
+const title = `Guida agli Integratori per Animali Domestici | ${siteConfig.name}`;
+const description = 'Guida completa agli integratori per cani e gatti: omega-3, glucosamina, probiotici e vitamine. Scopri benefici, utilizzi e consigli veterinari.';
+const canonical = absoluteUrl('/integratori');
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  canonical={canonical}
+>
+  <IntegratoriApp client:load />
+</BaseLayout>

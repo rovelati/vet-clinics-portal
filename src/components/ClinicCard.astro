@@ -1,0 +1,64 @@
+---
+import type { ClinicSummary } from '@/lib/clinics';
+import { clinicCityLabel, clinicImage } from '@/lib/clinics';
+
+interface Props {
+  clinic: ClinicSummary;
+}
+
+const { clinic } = Astro.props;
+const cityLabel = clinicCityLabel(clinic);
+const image = clinicImage(clinic);
+const hasPhoto = image !== '/favicon.svg';
+const rating = typeof clinic.rating_avg_cached === 'number' ? clinic.rating_avg_cached.toFixed(1) : null;
+const reviewCount = clinic.rating_count_cached ?? null;
+const href = clinic.slug ? `/veterinari/${clinic.slug}` : '#';
+const isVerified = Boolean(clinic.claimed_at || clinic.owner_id);
+---
+
+<a href={href} class="vet-card-hover block cursor-pointer overflow-hidden rounded-lg border-0 bg-white shadow-lg">
+  <div class="relative h-48 bg-gradient-to-br from-green-100 to-blue-100">
+    {hasPhoto ? (
+      <img
+        src={image}
+        alt={clinic.name}
+        class="h-full w-full object-cover"
+        loading="lazy"
+        onerror="this.onerror=null;this.src='/favicon.svg';this.classList.remove('object-cover');this.classList.add('object-contain','p-12','bg-gradient-to-br','from-green-100','to-blue-100');"
+      />
+    ) : (
+      <div class="flex h-full w-full items-center justify-center bg-gradient-to-br from-green-100 to-blue-100">
+        <img src="/favicon.svg" alt="" class="h-16 w-16" loading="lazy" />
+      </div>
+    )}
+    {rating && (
+      <div class="absolute right-3 top-3 inline-flex items-center gap-1 rounded-full bg-white/95 px-3 py-1 text-sm font-semibold text-gray-900 shadow" aria-label={`${rating} stelle${reviewCount ? `, ${reviewCount} recensioni` : ''}`}>
+        <span class="text-yellow-400" aria-hidden="true">★</span>
+        <span>{rating}</span>
+        {reviewCount ? <span class="ml-1 text-xs font-normal text-gray-500">({reviewCount})</span> : null}
+      </div>
+    )}
+    {isVerified && (
+      <div class="absolute left-3 top-3 inline-flex items-center gap-1 rounded-full bg-emerald-600 px-3 py-1 text-xs font-bold text-white shadow" title="Scheda reclamata e verificata da Veterinari.org">
+        <span aria-hidden="true">✓</span>
+        <span>Verificato</span>
+      </div>
+    )}
+  </div>
+  <div class="p-5">
+    <div class="flex flex-wrap items-start gap-2">
+      <h3 class="line-clamp-2 text-lg font-bold text-gray-900">{clinic.name}</h3>
+      {isVerified && (
+        <span class="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-1 text-xs font-bold text-emerald-700" title="Scheda reclamata e verificata da Veterinari.org">
+          ✓ Veterinario Verificato
+        </span>
+      )}
+    </div>
+    {cityLabel && <p class="mt-2 text-sm font-medium text-green-700">{cityLabel}</p>}
+    {clinic.address && <p class="mt-2 line-clamp-2 text-sm leading-6 text-gray-600">{clinic.address}</p>}
+    <div class="mt-4 flex items-center justify-between gap-3 text-sm">
+      {clinic.phone ? <span class="font-medium text-gray-700">{clinic.phone}</span> : <span></span>}
+      <span class="font-semibold text-blue-600">Vedi dettagli</span>
+    </div>
+  </div>
+</a>

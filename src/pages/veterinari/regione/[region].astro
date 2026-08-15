@@ -1,0 +1,8 @@
+---
+import VeterinariAreaPage from '@/components/VeterinariAreaPage.astro';
+import { cityNameFromSlug } from '@/lib/seo-urls';
+
+const region = cityNameFromSlug(Astro.params.region || '');
+---
+
+<VeterinariAreaPage kind="region" label={region} />

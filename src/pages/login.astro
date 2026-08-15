@@ -1,0 +1,16 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import LoginApp from '@/components/react/LoginApp.jsx';
+import { siteConfig } from '@/config/site';
+
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+---
+
+<BaseLayout
+  title={`Login - Accedi al tuo Account | ${siteConfig.name}`}
+  description={`Accedi al tuo account ${siteConfig.name} per gestire il profilo e i servizi veterinari.`}
+  canonical={`${siteConfig.url}/login`}
+  noindex={true}
+>
+  <LoginApp client:load />
+</BaseLayout>

@@ -1,0 +1,186 @@
+---
+import { siteConfig } from '@/config/site';
+import { Heart, Menu, PawPrint, X } from 'lucide-react';
+
+const navLinks = [
+  { href: '/veterinari-h24', label: 'Veterinari H24' },
+  { href: '/quanto-costa', label: 'Quanto Costa?' },
+  { href: '/pet-lover', label: 'Pet Lover' },
+  { href: '/vantaggi-veterinari', label: 'Area Veterinari' },
+  { href: '/integratori', label: 'Integratori' },
+  { href: '/blog', label: 'Blog' },
+];
+
+const currentPath = Astro.url.pathname;
+---
+
+<header class="sticky top-0 z-50 bg-white/80 shadow-sm backdrop-blur-lg">
+  <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+    <div class="flex h-16 items-center justify-between">
+      <a href="/" class="flex flex-shrink-0 items-center gap-2 text-2xl font-bold text-green-600" aria-label={siteConfig.name}>
+        <PawPrint className="h-8 w-8" aria-hidden="true" />
+        <div class="flex flex-col leading-none">
+          <span>{siteConfig.name}</span>
+          <span class="-mt-1 text-xs font-normal text-gray-500">{siteConfig.name}</span>
+        </div>
+      </a>
+
+      <nav class="hidden md:block" aria-label="Navigazione principale">
+        <div class="ml-10 flex items-baseline gap-1">
+          {navLinks.map((link) => {
+            const active = currentPath === link.href;
+            return (
+              <a
+                href={link.href}
+                class={`rounded-md px-3 py-2 text-sm font-medium transition-colors ${
+                  active ? 'bg-green-100 text-green-700' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+                }`}
+              >
+                {link.href === '/pet-lover' ? (
+                  <span class="inline-flex items-center gap-1">
+                    <span>Pet</span>
+                    <Heart className="h-4 w-4 fill-red-500 text-red-500" aria-hidden="true" />
+                    <span>Lover</span>
+                  </span>
+                ) : link.label}
+              </a>
+            );
+          })}
+        </div>
+      </nav>
+
+      <div id="desktop-auth-nav" class="hidden items-center gap-2 md:flex">
+        <a data-auth-guest href="/login" class="rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100">Login</a>
+        <a data-auth-guest href="/register?type=veterinario" rel="nofollow" class="rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700">
+          Registrati
+        </a>
+        <span data-auth-user class="hidden max-w-44 truncate text-sm font-semibold text-gray-700"></span>
+        <a data-auth-dashboard href="/dashboard/veterinario" class="hidden rounded-md bg-green-600 px-3 py-2 text-sm font-medium text-white hover:bg-green-700">Dashboard</a>
+        <button data-auth-logout type="button" class="hidden rounded-md px-3 py-2 text-sm font-medium text-gray-700 hover:bg-gray-100">Esci</button>
+      </div>
+
+      <button
+        type="button"
+        id="mobile-menu-button"
+        class="rounded-md p-2 text-gray-700 hover:bg-gray-100 md:hidden"
+        aria-label="Apri menu"
+        aria-controls="mobile-menu"
+        aria-expanded="false"
+      >
+        <Menu className="mobile-menu-open-icon h-6 w-6" aria-hidden="true" />
+        <X className="mobile-menu-close-icon hidden h-6 w-6" aria-hidden="true" />
+      </button>
+    </div>
+
+    <nav id="mobile-menu" class="hidden border-t border-gray-100 py-3 md:hidden" aria-label="Navigazione mobile">
+      <div class="space-y-1">
+        {navLinks.map((link) => {
+          const active = currentPath === link.href;
+          return (
+            <a
+              href={link.href}
+              class={`block rounded-md px-3 py-2 text-base font-medium transition-colors ${
+                active ? 'bg-green-100 text-green-700' : 'text-gray-700 hover:bg-gray-100 hover:text-gray-900'
+              }`}
+            >
+              {link.href === '/pet-lover' ? (
+                <span class="inline-flex items-center gap-1">
+                  <span>Pet</span>
+                  <Heart className="h-4 w-4 fill-red-500 text-red-500" aria-hidden="true" />
+                  <span>Lover</span>
+                </span>
+              ) : link.label}
+            </a>
+          );
+        })}
+      </div>
+      <div id="mobile-auth-nav" class="mt-3 grid gap-2 border-t border-gray-100 pt-3">
+        <a data-auth-guest href="/login" class="block rounded-md px-3 py-2 text-base font-medium text-gray-700 hover:bg-gray-100">Login</a>
+        <a data-auth-guest href="/register?type=veterinario" rel="nofollow" class="block rounded-md bg-green-600 px-3 py-2 text-center text-base font-medium text-white hover:bg-green-700">
+          Registrati
+        </a>
+        <span data-auth-user class="hidden rounded-md px-3 py-2 text-sm font-semibold text-gray-700"></span>
+        <a data-auth-dashboard href="/dashboard/veterinario" class="hidden rounded-md bg-green-600 px-3 py-2 text-center text-base font-medium text-white hover:bg-green-700">Dashboard</a>
+        <button data-auth-logout type="button" class="hidden rounded-md px-3 py-2 text-left text-base font-medium text-gray-700 hover:bg-gray-100">Esci</button>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<script>
+  const button = document.getElementById('mobile-menu-button');
+  const menu = document.getElementById('mobile-menu');
+  const openIcon = button?.querySelector('.mobile-menu-open-icon');
+  const closeIcon = button?.querySelector('.mobile-menu-close-icon');
+
+  function setMobileMenu(open) {
+    if (!button || !menu || !openIcon || !closeIcon) return;
+    button.setAttribute('aria-expanded', String(open));
+    button.setAttribute('aria-label', open ? 'Chiudi menu' : 'Apri menu');
+    menu.classList.toggle('hidden', !open);
+    openIcon.classList.toggle('hidden', open);
+    closeIcon.classList.toggle('hidden', !open);
+  }
+
+  button?.addEventListener('click', () => {
+    setMobileMenu(button.getAttribute('aria-expanded') !== 'true');
+  });
+
+  menu?.querySelectorAll('a').forEach((link) => {
+    link.addEventListener('click', () => setMobileMenu(false));
+  });
+
+  window.addEventListener('resize', () => {
+    if (window.innerWidth >= 768) setMobileMenu(false);
+  });
+
+  function authDashboardPath(user) {
+    const role = user?.user_metadata?.role;
+    if (role === 'admin') return '/admin-test';
+    if (role === 'veterinario') return '/dashboard/veterinario';
+    return '/dashboard/pet-lover';
+  }
+
+  function authDisplayName(user) {
+    return user?.user_metadata?.full_name || user?.email || 'Account';
+  }
+
+  async function loadIdentity() {
+    try {
+      const response = await fetch('/api/local-auth?action=session', {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+      });
+      const payload = await response.json();
+      const user = payload?.user || payload?.session?.user || null;
+      const logged = Boolean(user);
+
+      document.querySelectorAll('[data-auth-guest]').forEach((item) => item.classList.toggle('hidden', logged));
+      document.querySelectorAll('[data-auth-user]').forEach((item) => {
+        item.textContent = logged ? authDisplayName(user) : '';
+        item.classList.toggle('hidden', !logged);
+      });
+      document.querySelectorAll('[data-auth-dashboard]').forEach((item) => {
+        item.setAttribute('href', logged ? authDashboardPath(user) : '/login');
+        item.classList.toggle('hidden', !logged);
+      });
+      document.querySelectorAll('[data-auth-logout]').forEach((item) => item.classList.toggle('hidden', !logged));
+    } catch {
+      document.querySelectorAll('[data-auth-guest]').forEach((item) => item.classList.remove('hidden'));
+    }
+  }
+
+  document.querySelectorAll('[data-auth-logout]').forEach((item) => {
+    item.addEventListener('click', async () => {
+      await fetch('/api/local-auth', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'logout' }),
+      }).catch(() => null);
+      window.location.assign('/');
+    });
+  });
+
+  loadIdentity();
+</script>

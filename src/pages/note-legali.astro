@@ -1,0 +1,33 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+
+const title = `Note Legali | ${siteConfig.name}`;
+const description = `Note legali ed esonero di responsabilita di ${siteConfig.name}: fonti dati, recensioni, orari, prezzi e aggiornamento schede.`;
+---
+
+<BaseLayout title={title} description={description} canonical={`${siteConfig.url}/note-legali`}>
+  <main class="bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+    <article class="mx-auto max-w-4xl rounded-lg bg-white p-8 shadow-sm md:p-12">
+      <h1 class="text-3xl font-bold text-gray-900">Note Legali</h1>
+      <div class="mt-8 space-y-6 text-gray-700">
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Informazioni generali</h2>
+          <p class="mt-2">{siteConfig.name} fornisce dati e informazioni raccolte da fonti pubbliche riguardanti cliniche veterinarie italiane. I contenuti hanno finalita informative e non costituiscono consulenza professionale o veterinaria.</p>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Origine dei dati</h2>
+          <p class="mt-2">Nomi, indirizzi, contatti, orari, recensioni e servizi possono provenire da siti delle strutture, directory pubbliche, fonti web e dati pubblicamente disponibili.</p>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Prezzi e disponibilita</h2>
+          <p class="mt-2">Prezzi, prestazioni e disponibilita sono indicativi e devono sempre essere confermati direttamente con la clinica prima di prenotare o recarsi sul posto.</p>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Aggiornamento schede</h2>
+          <p class="mt-2">I titolari possono chiedere aggiornamenti o reclamare la propria scheda tramite <a href="/claim" class="text-green-700 underline">procedura di claim</a> o scrivendo a <a href={`mailto:${siteConfig.publicEmail}`} class="text-green-700 underline">{siteConfig.publicEmail}</a>.</p>
+        </section>
+      </div>
+    </article>
+  </main>
+</BaseLayout>

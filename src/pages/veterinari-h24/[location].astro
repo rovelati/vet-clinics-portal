@@ -1,0 +1,13 @@
+---
+import H24Page from '@/components/H24Page.astro';
+import { canonicalH24CityPath, cityNameFromSlug } from '@/lib/seo-urls';
+
+const locationParam = Astro.params.location || '';
+const match = locationParam.match(/^(.+)-([a-z]{2})$/i);
+
+if (match) {
+  return Astro.redirect(canonicalH24CityPath(cityNameFromSlug(match[1]), match[2]), 301);
+}
+---
+
+<H24Page locationParam={locationParam} />

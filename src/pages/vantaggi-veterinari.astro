@@ -1,0 +1,304 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+import { BarChart3, CalendarClock, CheckCircle, Edit3, FileText, MessageSquare, PhoneCall, ShieldCheck, Star, Tags, Users } from 'lucide-react';
+
+const title = `Area Veterinari | Scheda, lead, prezzi e statistiche | ${siteConfig.name}`;
+const description = 'Scopri perche registrare la tua struttura su Veterinari.org: scheda verificata, servizi e prezzi, reperibilita H24, contatti qualificati, contenuti professionali, CRM clienti e statistiche.';
+
+const benefits = [
+  {
+    icon: MessageSquare,
+    title: 'Scheda piu chiara e aggiornata',
+    text: 'Aggiorni descrizione, specializzazioni, foto, telefono, sito web e orari. La scheda diventa il punto ordinato da cui il proprietario capisce chi sei, cosa offri e come contattarti.',
+  },
+  {
+    icon: PhoneCall,
+    title: 'Lead da utenti con bisogno reale',
+    text: 'La piattaforma intercetta ricerche locali come veterinario vicino, clinica H24, ecografia, sterilizzazione o altre prestazioni. L obiettivo e portare contatti gia orientati alla chiamata o alla richiesta.',
+  },
+  {
+    icon: Tags,
+    title: 'Listino prezzi e prestazioni',
+    text: 'Puoi indicare quali prestazioni offri e, quando utile, pubblicare prezzi o range indicativi. Questo aiuta il proprietario a orientarsi e riduce contatti generici o poco qualificati.',
+  },
+];
+
+const platformPoints = [
+  'Prendi controllo della scheda e ottieni il badge di struttura verificata.',
+  'Modifichi dati, servizi, orari, foto, contatti e prestazioni.',
+  'Puoi indicare prezzi o range indicativi nelle prestazioni piu richieste.',
+  'Entri nei percorsi locali, H24, Quanto Costa e nelle richieste preventivo.',
+];
+
+const productFeatures = [
+  {
+    icon: Edit3,
+    title: 'Scheda e reputazione',
+    text: 'Gestisci descrizione, gallery, recensioni visibili, badge verificato, servizi offerti e informazioni utili per far scegliere meglio la struttura.',
+  },
+  {
+    icon: CalendarClock,
+    title: 'Reperibilita e H24',
+    text: 'Rendi piu chiari orari, aperture particolari, pronto soccorso, reperibilita e informazioni decisive quando l utente ha urgenza.',
+  },
+  {
+    icon: Tags,
+    title: 'Prestazioni e prezzi',
+    text: 'Dichiari le prestazioni offerte e, dove ha senso, prezzi o range. Questo qualifica meglio le richieste e riduce telefonate generiche.',
+  },
+  {
+    icon: FileText,
+    title: 'Articoli professionali',
+    text: 'Puoi proporre contenuti informativi firmati dalla struttura, con revisione editoriale, per aumentare autorevolezza e fiducia.',
+  },
+  {
+    icon: Users,
+    title: 'Mini CRM clienti',
+    text: 'Roadmap: elenco richieste ricevute, pet lover interessati, preferiti, richieste preventivo e storico contatti utili da gestire in modo semplice.',
+  },
+  {
+    icon: BarChart3,
+    title: 'Statistiche intuitive',
+    text: 'Roadmap: visualizzazioni scheda, click telefono, click percorso, richieste inviate e andamento per giorno, senza dashboard complicate.',
+  },
+];
+
+const workflow = [
+  {
+    step: '1',
+    title: 'Trovi o cerchi la tua struttura',
+    text: 'Parti dal claim e selezioni la clinica o l ambulatorio gia presente nel database.',
+  },
+  {
+    step: '2',
+    title: 'Accedi con il tuo account',
+    text: 'L account puo gestire una sola inserzione, cosi la responsabilita editoriale resta chiara.',
+  },
+  {
+    step: '3',
+    title: 'Completi e aggiorni la scheda',
+    text: 'Inserisci informazioni utili per l utente: servizi, orari, recapiti, descrizione, foto e prezzi indicativi.',
+  },
+  {
+    step: '4',
+    title: 'Verifica e pubblicazione',
+    text: 'L admin controlla la presa in carico e le modifiche prima della pubblicazione definitiva.',
+  },
+];
+
+const seoBlocks = [
+  {
+    title: 'Ricerche locali',
+    text: 'Le schede possono essere collegate alle pagine per citta, provincia e localita vicine, aiutando chi cerca una struttura nella zona.',
+  },
+  {
+    title: 'Prestazioni e preventivi',
+    text: 'I percorsi Quanto Costa portano l utente dalla prestazione alla localita, con cliniche da contattare e disponibilita da verificare.',
+  },
+  {
+    title: 'H24 e urgenze',
+    text: 'Le strutture aperte o disponibili 24 ore possono comparire nei percorsi dedicati alle ricerche urgenti.',
+  },
+  {
+    title: 'Area clienti Pet Lover',
+    text: 'I proprietari possono salvare veterinari preferiti e condividere dati dell animale quando contattano la struttura.',
+  },
+];
+
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'WebPage',
+  name: title,
+  description,
+  url: `${siteConfig.url}/vantaggi-veterinari`,
+  isPartOf: {
+    '@type': 'WebSite',
+    name: siteConfig.name,
+    url: siteConfig.url,
+  },
+};
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  canonical={`${siteConfig.url}/vantaggi-veterinari`}
+  jsonLd={jsonLd}
+>
+  <main class="bg-gray-50">
+    <section class="bg-white">
+      <div class="mx-auto grid max-w-7xl gap-10 px-4 py-12 sm:px-6 sm:py-16 lg:grid-cols-[1.05fr_0.95fr] lg:items-center lg:px-8 lg:py-20">
+        <div>
+          <p class="text-sm font-bold uppercase tracking-wide text-green-700">Area Veterinari</p>
+          <h1 class="mt-3 max-w-4xl text-4xl font-bold tracking-tight text-gray-950 sm:text-5xl">
+            Trasforma la tua scheda in un canale di contatto per nuovi clienti
+          </h1>
+          <p class="mt-5 max-w-3xl text-lg leading-8 text-gray-600">
+            Veterinari.org mette in contatto pet lover e strutture veterinarie. Registrandoti puoi gestire gratis la tua scheda, aggiornare informazioni, valorizzare prestazioni e reperibilita, ricevere richieste piu qualificate e misurare cosa funziona.
+          </p>
+          <div class="mt-8 flex flex-col gap-3 sm:flex-row">
+            <a href="/claim" class="inline-flex items-center justify-center rounded-md bg-green-700 px-5 py-3 text-sm font-semibold text-white shadow-sm hover:bg-green-800">
+              Aggiorna gratis la tua scheda
+            </a>
+            <a href="/register?type=veterinario&claim=true" rel="nofollow" class="inline-flex items-center justify-center rounded-md border border-gray-300 bg-white px-5 py-3 text-sm font-semibold text-gray-900 hover:bg-gray-50">
+              Crea account veterinario
+            </a>
+          </div>
+        </div>
+
+        <aside class="rounded-lg border border-green-100 bg-green-50 p-6 shadow-sm">
+          <div class="flex items-center gap-3">
+            <div class="flex h-12 w-12 items-center justify-center rounded-md bg-white text-green-700">
+              <ShieldCheck className="h-6 w-6" />
+            </div>
+            <div>
+              <p class="text-sm font-semibold uppercase tracking-wide text-green-800">Scheda verificata</p>
+              <h2 class="text-xl font-bold text-gray-950">Un solo account, una sola struttura gestita</h2>
+            </div>
+          </div>
+          <ul class="mt-6 space-y-3">
+            {platformPoints.map((item) => (
+              <li class="flex gap-3 text-sm leading-6 text-gray-700">
+                <CheckCircle className="mt-0.5 h-5 w-5 shrink-0 text-green-700" />
+                <span>{item}</span>
+              </li>
+            ))}
+          </ul>
+        </aside>
+      </div>
+    </section>
+
+    <section class="border-y border-gray-200 bg-gray-50 py-12 sm:py-16">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-3xl">
+          <p class="text-sm font-bold uppercase tracking-wide text-green-700">Perche iscriversi</p>
+          <h2 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">Tre leve pratiche per far lavorare meglio la tua presenza online</h2>
+        </div>
+        <div class="mt-8 grid gap-5 lg:grid-cols-3">
+          {benefits.map((item) => {
+            const Icon = item.icon;
+            return (
+              <article class="rounded-lg bg-white p-6 shadow-sm">
+                <div class="flex h-11 w-11 items-center justify-center rounded-md bg-green-50 text-green-700">
+                  <Icon className="h-6 w-6" />
+                </div>
+                <h3 class="mt-5 text-xl font-bold text-gray-950">{item.title}</h3>
+                <p class="mt-3 text-sm leading-7 text-gray-600">{item.text}</p>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-white py-12 sm:py-16">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="max-w-3xl">
+          <p class="text-sm font-bold uppercase tracking-wide text-green-700">Cosa potrai gestire</p>
+          <h2 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">Un pannello semplice per scheda, contatti e crescita</h2>
+          <p class="mt-3 text-base leading-8 text-gray-600">
+            L obiettivo non e creare un gestionale clinico, ma un area marketplace chiara: cosa vede l utente, quali richieste arrivano e quali azioni generano contatti.
+          </p>
+        </div>
+        <div class="mt-8 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
+          {productFeatures.map((item) => {
+            const Icon = item.icon;
+            return (
+              <article class="rounded-lg border border-gray-200 bg-white p-6 shadow-sm">
+                <div class="flex h-11 w-11 items-center justify-center rounded-md bg-green-50 text-green-700">
+                  <Icon className="h-6 w-6" />
+                </div>
+                <h3 class="mt-5 text-lg font-bold text-gray-950">{item.title}</h3>
+                <p class="mt-3 text-sm leading-7 text-gray-600">{item.text}</p>
+              </article>
+            );
+          })}
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-white py-12 sm:py-16">
+      <div class="mx-auto grid max-w-7xl gap-8 px-4 sm:px-6 lg:grid-cols-[0.9fr_1.1fr] lg:px-8">
+        <div>
+          <p class="text-sm font-bold uppercase tracking-wide text-green-700">Visibilita utile</p>
+          <h2 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">Non solo una scheda: percorsi che seguono l intento dell utente</h2>
+          <p class="mt-4 text-base leading-8 text-gray-600">
+            Chi arriva da Google spesso ha gia un esigenza precisa: trovare una clinica in zona, capire quanto costa una prestazione, contattare una struttura aperta o chiedere disponibilita. La piattaforma organizza questi intenti in pagine leggibili e collegate alla tua presenza.
+          </p>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          {seoBlocks.map((item) => (
+            <article class="rounded-lg border border-gray-200 p-5">
+              <h3 class="font-bold text-gray-950">{item.title}</h3>
+              <p class="mt-3 text-sm leading-6 text-gray-600">{item.text}</p>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-gray-50 py-12 sm:py-16">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="grid gap-8 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+          <div>
+            <p class="text-sm font-bold uppercase tracking-wide text-green-700">Workflow</p>
+            <h2 class="mt-2 text-3xl font-bold tracking-tight text-gray-950">Dalla presa in carico alla pubblicazione verificata</h2>
+            <p class="mt-4 text-base leading-8 text-gray-600">
+              Il modello e pensato per tutelare sia il professionista sia l utente: la scheda viene reclamata, aggiornata e poi controllata prima di rendere pubbliche le informazioni sensibili.
+            </p>
+          </div>
+          <div class="grid gap-4 sm:grid-cols-2">
+            {workflow.map((item) => (
+              <article class="rounded-lg bg-white p-5 shadow-sm">
+                <span class="inline-flex h-8 w-8 items-center justify-center rounded-md bg-green-700 text-sm font-bold text-white">{item.step}</span>
+                <h3 class="mt-4 font-bold text-gray-950">{item.title}</h3>
+                <p class="mt-2 text-sm leading-6 text-gray-600">{item.text}</p>
+              </article>
+            ))}
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-white py-12 sm:py-16">
+      <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+        <div class="grid gap-5 md:grid-cols-3">
+          <article class="rounded-lg border border-gray-200 p-6">
+            <Star className="h-7 w-7 text-yellow-500" />
+            <h3 class="mt-4 text-lg font-bold text-gray-950">Reputazione piu leggibile</h3>
+            <p class="mt-2 text-sm leading-6 text-gray-600">Foto, recensioni, orari, telefono e descrizione aiutano l utente a scegliere con piu fiducia.</p>
+          </article>
+          <article class="rounded-lg border border-gray-200 p-6">
+            <BarChart3 className="h-7 w-7 text-blue-600" />
+            <h3 class="mt-4 text-lg font-bold text-gray-950">Metriche leggibili</h3>
+            <p class="mt-2 text-sm leading-6 text-gray-600">Click, visualizzazioni, chiamate e richieste saranno leggibili per giorno, con indicatori semplici.</p>
+          </article>
+          <article class="rounded-lg border border-gray-200 p-6">
+            <FileText className="h-7 w-7 text-green-700" />
+            <h3 class="mt-4 text-lg font-bold text-gray-950">Contenuti professionali</h3>
+            <p class="mt-2 text-sm leading-6 text-gray-600">Il blog puo ospitare articoli utili scritti da veterinari, dopo revisione manuale dell admin.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="bg-gradient-to-r from-green-700 to-blue-700 py-12 text-white sm:py-16">
+      <div class="mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
+        <p class="text-sm font-bold uppercase tracking-wide text-green-100">Inizia dalla tua scheda</p>
+        <h2 class="mt-3 text-3xl font-bold tracking-tight sm:text-4xl">Prendi controllo della scheda e trasformala in un punto di contatto utile per i proprietari</h2>
+        <p class="mx-auto mt-4 max-w-2xl text-base leading-8 text-green-50">
+          Aggiorna dati, servizi, orari e prezzi indicativi. La pubblicazione resta verificata per mantenere affidabilita e chiarezza.
+        </p>
+        <div class="mt-8 flex flex-col justify-center gap-3 sm:flex-row">
+          <a href="/claim" class="inline-flex items-center justify-center rounded-md bg-white px-5 py-3 text-sm font-semibold text-green-800 shadow-sm hover:bg-green-50">
+            Aggiorna gratis la scheda
+          </a>
+          <a href="/blog" class="inline-flex items-center justify-center rounded-md border border-white px-5 py-3 text-sm font-semibold text-white hover:bg-white hover:text-green-800">
+            Scopri il blog professionisti
+          </a>
+        </div>
+      </div>
+    </section>
+  </main>
+</BaseLayout>

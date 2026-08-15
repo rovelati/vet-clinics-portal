@@ -1,0 +1,16 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import PetLoverApp from '@/components/react/PetLoverApp.jsx';
+import { siteConfig } from '@/config/site';
+
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+---
+
+<BaseLayout
+  title={`Area Pet Lover | ${siteConfig.name}`}
+  description="Gestisci animali, scadenze sanitarie, spese e condivisioni con il veterinario."
+  canonical={`${siteConfig.url}/dashboard/pet-lover`}
+  noindex={true}
+>
+  <PetLoverApp client:load />
+</BaseLayout>

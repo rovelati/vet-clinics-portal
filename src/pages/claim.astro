@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import ClaimInfoApp from '@/components/react/ClaimInfoApp.jsx';
+import { siteConfig } from '@/config/site';
+---
+
+<BaseLayout
+  title={`Aggiorna gratis la tua scheda veterinaria | ${siteConfig.name}`}
+  description={`Registrati gratis per aggiornare orari, servizi, foto e contatti della tua struttura veterinaria su ${siteConfig.name}.`}
+  canonical={`${siteConfig.url}/claim`}
+  noindex={true}
+>
+  <ClaimInfoApp client:load />
+</BaseLayout>

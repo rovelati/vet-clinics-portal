@@ -1,0 +1,781 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import VeterinariH24App from '@/components/react/VeterinariH24App.jsx';
+import { siteConfig } from '@/config/site';
+import { supabasePublicServer } from '@/lib/supabase';
+import { clinicImage } from '@/lib/clinics';
+import { canonicalH24CityPath, slugifyLocation } from '@/lib/seo-urls';
+
+interface Props {
+  locationParam?: string;
+  cityName?: string;
+  province?: string;
+}
+
+const { locationParam = '', cityName = '', province = '' } = Astro.props;
+const dayNames = ['Domenica', 'Lunedì', 'Martedì', 'Mercoledì', 'Giovedì', 'Venerdì', 'Sabato'];
+const resultLimit = 7;
+const geoIpStripLimit = 3;
+const clinicSelect = `
+  id, name, address, phone, slug,
+  rating_avg_cached, rating_count_cached,
+  lat, lng, hours, raw_import, gallery_images, created_at
+`;
+
+function cleanText(value: unknown) {
+  return typeof value === 'string' ? value.replace(/"/g, '').trim() : '';
+}
+
+function parseCityPart(value: string) {
+  const cityPart = cleanText(value);
+  if (!cityPart) return { city: null as string | null, province: null as string | null };
+  const match = cityPart.match(/^(.+)-([a-z]{2})$/i);
+  if (match) {
+    return {
+      city: match[1].split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+      province: match[2].toUpperCase(),
+    };
+  }
+  if (/^[a-z]{2}$/i.test(cityPart)) return { city: null, province: cityPart.toUpperCase() };
+  return {
+    city: cityPart.split('-').map((word) => word.charAt(0).toUpperCase() + word.slice(1)).join(' '),
+    province: null,
+  };
+}
+
+function cleanSearchTerm(value: string) {
+  return cleanText(value).replace(/[%,]/g, ' ').replace(/\s+/g, ' ');
+}
+
+function readHeader(headers: Headers, names: string[]) {
+  for (const name of names) {
+    const value = headers.get(name);
+    if (value && value.trim()) return value.trim();
+  }
+  return '';
+}
+
+function numericValue(value: unknown) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function haversineDistance(from: { lat: number; lng: number }, to: { lat: number; lng: number }) {
+  const radiusKm = 6371;
+  const toRadians = (degree: number) => degree * Math.PI / 180;
+  const dLat = toRadians(to.lat - from.lat);
+  const dLng = toRadians(to.lng - from.lng);
+  const lat1 = toRadians(from.lat);
+  const lat2 = toRadians(to.lat);
+  const a = Math.sin(dLat / 2) ** 2 + Math.sin(dLng / 2) ** 2 * Math.cos(lat1) * Math.cos(lat2);
+  return radiusKm * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+}
+
+function geoIpLocationFromHeaders(headers: Headers) {
+  const country = readHeader(headers, ['cf-ipcountry', 'x-vercel-ip-country']).toUpperCase();
+  if (country && country !== 'IT') return null;
+
+  const city = decodeURIComponent(readHeader(headers, ['cf-ipcity', 'x-vercel-ip-city']).replace(/\+/g, ' '));
+  const provinceRaw = readHeader(headers, ['cf-region-code', 'x-vercel-ip-country-region']).toUpperCase();
+  const province = /^[A-Z]{2}$/.test(provinceRaw) ? provinceRaw : '';
+  const region = decodeURIComponent(readHeader(headers, ['cf-region', 'x-vercel-ip-country-region-name']).replace(/\+/g, ' '));
+  const lat = numericValue(readHeader(headers, ['cf-iplatitude', 'x-vercel-ip-latitude']));
+  const lng = numericValue(readHeader(headers, ['cf-iplongitude', 'x-vercel-ip-longitude']));
+
+  if (lat !== null && lng !== null) {
+    return {
+      lat,
+      lng,
+      city: cleanText(city),
+      province: cleanText(province),
+      regionCode: cleanText(provinceRaw),
+      region: cleanText(region),
+      label: [cleanText(city), cleanText(province || region)].filter(Boolean).join(', ') || 'la tua zona',
+      source: 'geoip',
+    };
+  }
+
+  if (city || province) {
+    return {
+      lat: null,
+      lng: null,
+      city: cleanText(city),
+      province: cleanText(province),
+      regionCode: cleanText(provinceRaw),
+      region: cleanText(region),
+      label: [cleanText(city), cleanText(province || region)].filter(Boolean).join(', ') || 'la tua zona',
+      source: 'geoip',
+    };
+  }
+
+  return null;
+}
+
+function normalizeDaySlots(value: unknown) {
+  if (Array.isArray(value)) return value.map(String);
+  if (typeof value === 'string' && value.trim()) return [value];
+  return [];
+}
+
+function normalizeMinutes(timeString: unknown) {
+  if (!timeString) return null;
+  const [hours, minutes = '0'] = String(timeString).split(':').map((part) => parseInt(part, 10));
+  if (Number.isNaN(hours) || Number.isNaN(minutes)) return null;
+  if (hours === 24 && minutes === 0) return 24 * 60;
+  return Math.max(0, Math.min(24 * 60, hours * 60 + minutes));
+}
+
+function slotCoversFullDay(slot: unknown) {
+  if (typeof slot !== 'string') return false;
+  const trimmed = slot.trim();
+  if (/^h24$/i.test(trimmed) || /^24h$/i.test(trimmed) || /aperto\s*(24|h24)/i.test(trimmed)) return true;
+  if (/(^|\s)00:00\s*[-–—]\s*(24:00|23:59|00:00)/.test(trimmed)) return true;
+  const parts = trimmed.split(/[-–—]/).map((part) => part.trim());
+  if (parts.length < 2) return false;
+  const [start, end] = parts;
+  return start === '00:00' && ['24:00', '23:59', '00:00'].includes(end);
+}
+
+function computeOpenStatus(clinic: any, referenceDate = new Date()) {
+  const hours = clinic?.hours || {};
+  const todaysKey = dayNames[referenceDate.getDay()];
+  const todaysSlots = normalizeDaySlots(hours[todaysKey]);
+  const rawImport = clinic?.raw_import && typeof clinic.raw_import === 'object' ? clinic.raw_import : {};
+  const tags = Array.isArray(rawImport.tags) ? rawImport.tags : [];
+  const flags = Array.isArray(rawImport.flags) ? rawImport.flags : [];
+  const tagList = [...tags, ...flags].map((tag) => cleanText(tag).toLowerCase()).filter(Boolean);
+  const hasExplicitH24Tag = tagList.some((tag) => /^h24$|^24h$|^aperto\s*24\s*ore$|^aperto\s*h24$/.test(tag));
+  const hasAnyH24Slot = Object.values(hours).some((slots) => normalizeDaySlots(slots).some(slotCoversFullDay));
+  const isAlwaysOpen = hasExplicitH24Tag || hasAnyH24Slot;
+
+  if (isAlwaysOpen) return { isAlwaysOpen: true, isOpenNow: true, todaysSlots };
+
+  const nowMinutes = referenceDate.getHours() * 60 + referenceDate.getMinutes();
+  const isOpenNow = todaysSlots.some((slot) => {
+    const [startRaw, endRaw] = String(slot).split(/[-–—]/).map((part) => part.trim());
+    const startMinutes = normalizeMinutes(startRaw);
+    const endMinutes = normalizeMinutes(endRaw);
+    if (startMinutes === null || endMinutes === null) return false;
+    if (startMinutes === endMinutes && ['00:00', '24:00'].includes(endRaw)) return true;
+    if (endMinutes <= startMinutes) return nowMinutes >= startMinutes || nowMinutes < endMinutes;
+    if (startMinutes === 0 && endMinutes >= 24 * 60 - 1) return true;
+    return nowMinutes >= startMinutes && nowMinutes < endMinutes;
+  });
+
+  return { isAlwaysOpen: false, isOpenNow, todaysSlots };
+}
+
+function openingHoursSpecification(hours: Record<string, unknown> | null | undefined) {
+  if (!hours || typeof hours !== 'object') return undefined;
+  const specs = Object.entries(hours).flatMap(([dayName, slots]) => {
+    const dayOfWeek = {
+      Lunedì: 'Monday',
+      Martedì: 'Tuesday',
+      Mercoledì: 'Wednesday',
+      Giovedì: 'Thursday',
+      Venerdì: 'Friday',
+      Sabato: 'Saturday',
+      Domenica: 'Sunday',
+    }[dayName];
+    if (!dayOfWeek) return [];
+    return normalizeDaySlots(slots).map((slot) => {
+      if (slotCoversFullDay(slot)) {
+        return {
+          '@type': 'OpeningHoursSpecification',
+          dayOfWeek,
+          opens: '00:00',
+          closes: '23:59',
+        };
+      }
+      const [opens, closes] = String(slot).split(/[-–—]/).map((part) => part.trim());
+      return opens && closes
+        ? { '@type': 'OpeningHoursSpecification', dayOfWeek, opens, closes }
+        : null;
+    }).filter(Boolean);
+  });
+  return specs.length ? specs : undefined;
+}
+
+async function loadInitialH24Clinics(locationInfo: { city: string | null; province: string | null }) {
+  if (!supabasePublicServer) return [];
+
+  const cityTerm = cleanSearchTerm(locationInfo.city || '');
+  const provinceTerm = cleanSearchTerm(locationInfo.province || '');
+  const filters = [];
+  if (cityTerm) filters.push(`raw_import->>city.ilike.%${cityTerm}%`);
+  if (provinceTerm) filters.push(`raw_import->>province.ilike.%${provinceTerm}%`);
+
+  let request = supabasePublicServer
+    .from('clinics')
+    .select(clinicSelect)
+    .in('status', ['pubblicata', 'in_revisione'])
+    .not('slug', 'is', null)
+    .limit(filters.length ? 200 : 60);
+
+  if (filters.length) request = request.or(filters.join(','));
+
+  request = request
+    .order('rating_avg_cached', { ascending: false, nullsFirst: false })
+    .order('rating_count_cached', { ascending: false, nullsFirst: false });
+
+  const { data, error } = await request;
+  if (error) {
+    console.error('Errore caricamento SEO veterinari H24:', error.message);
+    return [];
+  }
+
+  const searchCity = cleanText(locationInfo.city).toLowerCase();
+  const searchProvince = cleanText(locationInfo.province).toUpperCase();
+
+  return (data ?? [])
+    .map((clinic: any) => ({
+      ...clinic,
+      ...computeOpenStatus(clinic),
+      ratingValue: clinic.rating_avg_cached == null ? null : Number(clinic.rating_avg_cached),
+      reviewsValue: clinic.rating_count_cached == null ? null : Number(clinic.rating_count_cached),
+    }))
+    .filter((clinic: any) => clinic.isAlwaysOpen || clinic.isOpenNow)
+    .sort((a: any, b: any) => {
+      const cityA = cleanText(a.raw_import?.city).toLowerCase();
+      const cityB = cleanText(b.raw_import?.city).toLowerCase();
+      const provinceA = cleanText(a.raw_import?.province).toUpperCase();
+      const provinceB = cleanText(b.raw_import?.province).toUpperCase();
+      const aExactCity = searchCity && cityA === searchCity;
+      const bExactCity = searchCity && cityB === searchCity;
+      if (aExactCity !== bExactCity) return aExactCity ? -1 : 1;
+      const aProvince = searchProvince && provinceA === searchProvince;
+      const bProvince = searchProvince && provinceB === searchProvince;
+      if (aProvince !== bProvince) return aProvince ? -1 : 1;
+      if (a.isAlwaysOpen !== b.isAlwaysOpen) return a.isAlwaysOpen ? -1 : 1;
+      if ((a.ratingValue ?? 0) !== (b.ratingValue ?? 0)) return (b.ratingValue ?? 0) - (a.ratingValue ?? 0);
+      return (b.reviewsValue ?? 0) - (a.reviewsValue ?? 0);
+    })
+    .slice(0, resultLimit);
+}
+
+async function loadGeoIpCenterFromClinics(geoLocation: ReturnType<typeof geoIpLocationFromHeaders>) {
+  if (!supabasePublicServer || !geoLocation) return null;
+  if (geoLocation.lat !== null && geoLocation.lng !== null) return { lat: geoLocation.lat, lng: geoLocation.lng };
+  if (!geoLocation.city && !geoLocation.province) return null;
+
+  let request = supabasePublicServer
+    .from('clinics')
+    .select('lat, lng, raw_import')
+    .in('status', ['pubblicata', 'in_revisione'])
+    .not('lat', 'is', null)
+    .not('lng', 'is', null)
+    .limit(200);
+
+  if (geoLocation.city) {
+    request = request.filter('raw_import->>city', 'ilike', cleanSearchTerm(geoLocation.city));
+  }
+  if (geoLocation.province) {
+    request = request.filter('raw_import->>province', 'eq', cleanSearchTerm(geoLocation.province).toUpperCase());
+  }
+
+  const { data, error } = await request;
+  if (error) {
+    console.error('Errore caricamento centro geo IP H24:', error.message);
+    return null;
+  }
+
+  const points = (data ?? [])
+    .map((clinic: any) => ({ lat: Number(clinic.lat), lng: Number(clinic.lng) }))
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+  if (!points.length) return null;
+
+  return {
+    lat: points.reduce((sum, point) => sum + point.lat, 0) / points.length,
+    lng: points.reduce((sum, point) => sum + point.lng, 0) / points.length,
+  };
+}
+
+async function loadGeoIpOpenNowClinics(geoLocation: ReturnType<typeof geoIpLocationFromHeaders>) {
+  if (!supabasePublicServer || !geoLocation) return [];
+
+  const center = await loadGeoIpCenterFromClinics(geoLocation);
+  if (!center) return [];
+
+  const latDelta = 0.9;
+  const lngDelta = 1.2;
+  let request = supabasePublicServer
+    .from('clinics')
+    .select(clinicSelect)
+    .in('status', ['pubblicata', 'in_revisione'])
+    .not('slug', 'is', null)
+    .not('lat', 'is', null)
+    .not('lng', 'is', null)
+    .gte('lat', center.lat - latDelta)
+    .lte('lat', center.lat + latDelta)
+    .gte('lng', center.lng - lngDelta)
+    .lte('lng', center.lng + lngDelta)
+    .limit(900);
+
+  if (geoLocation.province) {
+    request = request.filter('raw_import->>province', 'eq', cleanSearchTerm(geoLocation.province).toUpperCase());
+  }
+
+  const { data, error } = await request;
+  if (error) {
+    console.error('Errore caricamento strip geo IP H24:', error.message);
+    return [];
+  }
+
+  return (data ?? [])
+    .map((clinic: any) => {
+      const lat = Number(clinic.lat);
+      const lng = Number(clinic.lng);
+      return {
+        ...clinic,
+        ...computeOpenStatus(clinic),
+        ratingValue: clinic.rating_avg_cached == null ? null : Number(clinic.rating_avg_cached),
+        reviewsValue: clinic.rating_count_cached == null ? null : Number(clinic.rating_count_cached),
+        lat,
+        lng,
+        distanceKm: Number.isFinite(lat) && Number.isFinite(lng) ? haversineDistance(center, { lat, lng }) : null,
+      };
+    })
+    .filter((clinic: any) => (clinic.isAlwaysOpen || clinic.isOpenNow) && clinic.distanceKm !== null)
+    .sort((a: any, b: any) => {
+      if (Math.abs(Number(a.distanceKm) - Number(b.distanceKm)) > 0.1) return Number(a.distanceKm) - Number(b.distanceKm);
+      if (a.isAlwaysOpen !== b.isAlwaysOpen) return a.isAlwaysOpen ? -1 : 1;
+      if ((a.ratingValue ?? 0) !== (b.ratingValue ?? 0)) return (b.ratingValue ?? 0) - (a.ratingValue ?? 0);
+      return (b.reviewsValue ?? 0) - (a.reviewsValue ?? 0);
+    })
+    .slice(0, geoIpStripLimit);
+}
+
+async function loadNearbyH24LocationLinks(locationInfo: { city: string | null; province: string | null }) {
+  if (!supabasePublicServer || !locationInfo.province) return [];
+
+  const provinceTerm = cleanSearchTerm(locationInfo.province).toUpperCase();
+  const currentCitySlug = slugifyLocation(locationInfo.city || '');
+
+  const { data, error } = await supabasePublicServer
+    .from('clinics')
+    .select('hours, raw_import')
+    .in('status', ['pubblicata', 'in_revisione'])
+    .not('slug', 'is', null)
+    .filter('raw_import->>province', 'eq', provinceTerm)
+    .limit(800);
+
+  if (error) {
+    console.error('Errore caricamento localita H24 vicine:', error.message);
+    return [];
+  }
+
+  const cityCounts = new Map<string, { city: string; province: string; h24Count: number; totalCount: number }>();
+
+  (data ?? []).forEach((clinic: any) => {
+    const city = cleanText(clinic.raw_import?.city);
+    const province = cleanText(clinic.raw_import?.province).toUpperCase() || provinceTerm;
+    const citySlug = slugifyLocation(city);
+    if (!city || !province || !citySlug || citySlug === currentCitySlug) return;
+
+    const current = cityCounts.get(`${citySlug}|${province}`) || {
+      city,
+      province,
+      h24Count: 0,
+      totalCount: 0,
+    };
+    const status = computeOpenStatus(clinic);
+    current.totalCount += 1;
+    if (status.isAlwaysOpen || status.isOpenNow) current.h24Count += 1;
+    cityCounts.set(`${citySlug}|${province}`, current);
+  });
+
+  return Array.from(cityCounts.values())
+    .sort((a, b) => {
+      if (b.h24Count !== a.h24Count) return b.h24Count - a.h24Count;
+      if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
+      return a.city.localeCompare(b.city, 'it');
+    })
+    .slice(0, 6)
+    .map((item) => ({
+      label: `Veterinari H24 a ${item.city}, ${item.province}`,
+      href: canonicalH24CityPath(item.city, item.province),
+      count: item.h24Count || item.totalCount,
+    }));
+}
+
+async function loadPopularH24LocationLinks() {
+  if (!supabasePublicServer) return [];
+
+  const { data, error } = await supabasePublicServer
+    .from('clinics')
+    .select('hours, raw_import')
+    .in('status', ['pubblicata', 'in_revisione'])
+    .not('slug', 'is', null)
+    .limit(2500);
+
+  if (error) {
+    console.error('Errore caricamento localita H24 principali:', error.message);
+    return [];
+  }
+
+  const cityCounts = new Map<string, { city: string; province: string; h24Count: number; totalCount: number }>();
+
+  (data ?? []).forEach((clinic: any) => {
+    const city = cleanText(clinic.raw_import?.city);
+    const province = cleanText(clinic.raw_import?.province).toUpperCase();
+    const citySlug = slugifyLocation(city);
+    if (!city || !province || !citySlug) return;
+
+    const current = cityCounts.get(`${citySlug}|${province}`) || {
+      city,
+      province,
+      h24Count: 0,
+      totalCount: 0,
+    };
+    const status = computeOpenStatus(clinic);
+    current.totalCount += 1;
+    if (status.isAlwaysOpen || status.isOpenNow) current.h24Count += 1;
+    cityCounts.set(`${citySlug}|${province}`, current);
+  });
+
+  return Array.from(cityCounts.values())
+    .filter((item) => item.h24Count > 0)
+    .sort((a, b) => {
+      if (b.h24Count !== a.h24Count) return b.h24Count - a.h24Count;
+      if (b.totalCount !== a.totalCount) return b.totalCount - a.totalCount;
+      return a.city.localeCompare(b.city, 'it');
+    })
+    .slice(0, 18)
+    .map((item) => ({
+      label: `${item.city}, ${item.province}`,
+      title: `Veterinari H24 a ${item.city}, ${item.province}`,
+      href: canonicalH24CityPath(item.city, item.province),
+      count: item.h24Count,
+    }));
+}
+
+async function loadLocationGeo(locationInfo: { city: string | null; province: string | null }) {
+  if (!supabasePublicServer || !locationInfo.city) return null;
+
+  const cityTerm = cleanSearchTerm(locationInfo.city);
+  const provinceTerm = cleanSearchTerm(locationInfo.province || '').toUpperCase();
+
+  let request = supabasePublicServer
+    .from('clinics')
+    .select('lat, lng, raw_import')
+    .in('status', ['pubblicata', 'in_revisione'])
+    .not('lat', 'is', null)
+    .not('lng', 'is', null)
+    .filter('raw_import->>city', 'ilike', cityTerm)
+    .limit(100);
+
+  if (provinceTerm) request = request.filter('raw_import->>province', 'eq', provinceTerm);
+
+  const { data, error } = await request;
+  if (error) {
+    console.error('Errore caricamento geo localita H24:', error.message);
+    return null;
+  }
+
+  const points = (data ?? [])
+    .map((clinic: any) => ({ lat: Number(clinic.lat), lng: Number(clinic.lng) }))
+    .filter((point) => Number.isFinite(point.lat) && Number.isFinite(point.lng));
+
+  if (!points.length) return null;
+
+  const lat = points.reduce((sum, point) => sum + point.lat, 0) / points.length;
+  const lng = points.reduce((sum, point) => sum + point.lng, 0) / points.length;
+
+  return {
+    '@type': 'City',
+    name: locationLabel,
+    address: {
+      '@type': 'PostalAddress',
+      addressLocality: locationInfo.city,
+      addressRegion: locationInfo.province || undefined,
+      addressCountry: 'IT',
+    },
+    geo: {
+      '@type': 'GeoCoordinates',
+      latitude: Number(lat.toFixed(6)),
+      longitude: Number(lng.toFixed(6)),
+    },
+  };
+}
+
+const locationInfo = cityName && province
+  ? { city: cityName, province: province.toUpperCase() }
+  : parseCityPart(locationParam);
+const locationLabel = locationInfo.city
+  ? `${locationInfo.city}${locationInfo.province ? `, ${locationInfo.province}` : ''}`
+  : locationInfo.province || '';
+const initialClinics = await loadInitialH24Clinics(locationInfo);
+const geoIpLocation = !locationLabel ? geoIpLocationFromHeaders(Astro.request.headers) : null;
+const geoIpOpenNowClinics = await loadGeoIpOpenNowClinics(geoIpLocation);
+const nearbyH24LocationLinks = await loadNearbyH24LocationLinks(locationInfo);
+const popularH24LocationLinks = locationLabel ? [] : await loadPopularH24LocationLinks();
+const locationGeoLd = await loadLocationGeo(locationInfo);
+const canonicalPath = locationInfo.city && locationInfo.province
+  ? canonicalH24CityPath(locationInfo.city, locationInfo.province)
+  : locationParam
+    ? `/veterinari-h24/${locationParam}`
+    : '/veterinari-h24';
+const canonical = `${siteConfig.url}${canonicalPath}`;
+const title = locationLabel
+  ? `Pronto soccorso veterinario H24 a ${locationLabel}: aperti ora | ${siteConfig.name}`
+  : `Pronto soccorso veterinario H24 e aperto ora vicino a te | ${siteConfig.name}`;
+const description = locationLabel
+  ? `Cerchi un pronto soccorso veterinario o un veterinario aperto ora a ${locationLabel}? Trova cliniche, ambulatori e strutture H24 per urgenze animali con telefono, mappa e indicazioni.`
+  : 'Cerca un pronto soccorso veterinario, una clinica H24 o un veterinario aperto ora vicino a te. Trova telefono, mappa e indicazioni per urgenze animali.';
+
+const itemListElement = initialClinics.map((clinic: any, index: number) => {
+  const lat = Number(clinic.lat);
+  const lng = Number(clinic.lng);
+  return {
+    '@type': 'ListItem',
+    position: index + 1,
+    item: {
+      '@type': ['VeterinaryCare', 'LocalBusiness'],
+      name: clinic.name,
+      url: `${siteConfig.url}/veterinari/${clinic.slug}`,
+      telephone: clinic.phone || undefined,
+      address: clinic.address || undefined,
+      image: clinicImage(clinic),
+      openingHoursSpecification: openingHoursSpecification(clinic.hours),
+      geo: Number.isFinite(lat) && Number.isFinite(lng)
+        ? {
+          '@type': 'GeoCoordinates',
+          latitude: lat,
+          longitude: lng,
+        }
+        : undefined,
+    },
+  };
+});
+
+const geoIpOpenNowItemListElement = geoIpOpenNowClinics.map((clinic: any, index: number) => {
+  const lat = Number(clinic.lat);
+  const lng = Number(clinic.lng);
+  return {
+    '@type': 'ListItem',
+    position: index + 1,
+    item: {
+      '@type': ['VeterinaryCare', 'LocalBusiness'],
+      name: clinic.name,
+      url: `${siteConfig.url}/veterinari/${clinic.slug}`,
+      telephone: clinic.phone || undefined,
+      address: clinic.address || undefined,
+      image: clinicImage(clinic),
+      openingHoursSpecification: openingHoursSpecification(clinic.hours),
+      geo: Number.isFinite(lat) && Number.isFinite(lng)
+        ? {
+          '@type': 'GeoCoordinates',
+          latitude: lat,
+          longitude: lng,
+        }
+        : undefined,
+    },
+  };
+});
+
+const geoIpLocationLd = geoIpLocation && geoIpLocation.lat !== null && geoIpLocation.lng !== null
+  ? {
+    '@type': 'Place',
+    name: geoIpLocation.label || 'Posizione stimata del visitatore',
+    address: {
+      '@type': 'PostalAddress',
+      addressLocality: geoIpLocation.city || undefined,
+      addressRegion: geoIpLocation.province || geoIpLocation.region || undefined,
+      addressCountry: 'IT',
+    },
+    geo: {
+      '@type': 'GeoCoordinates',
+      latitude: Number(geoIpLocation.lat.toFixed(6)),
+      longitude: Number(geoIpLocation.lng.toFixed(6)),
+    },
+  }
+  : null;
+const primaryItemListElement = itemListElement.length ? itemListElement : geoIpOpenNowItemListElement;
+const primaryItemListName = locationLabel
+  ? `Pronto soccorso veterinario e H24 a ${locationLabel}`
+  : geoIpLocation?.label
+    ? `Pronto soccorso veterinario vicino a ${geoIpLocation.label}`
+    : 'Pronto soccorso veterinario H24 e aperto ora in Italia';
+const collectionLd = {
+  '@context': 'https://schema.org',
+  '@type': 'CollectionPage',
+  name: title,
+  description,
+  url: canonical,
+  isPartOf: {
+    '@type': 'WebSite',
+    name: siteConfig.name,
+    url: siteConfig.url,
+  },
+  contentLocation: locationGeoLd || geoIpLocationLd || undefined,
+  areaServed: locationGeoLd || geoIpLocationLd || undefined,
+  mainEntity: {
+    '@type': 'ItemList',
+    name: primaryItemListName,
+    numberOfItems: primaryItemListElement.length,
+    itemListElement: primaryItemListElement,
+  },
+};
+
+const geoIpOpenNowLd = geoIpOpenNowClinics.length > 0
+  ? {
+    '@context': 'https://schema.org',
+    '@type': 'ItemList',
+    name: geoIpLocation?.label
+      ? `Veterinari aperti ora vicino a ${geoIpLocation.label}`
+      : 'Veterinari aperti ora vicino al visitatore',
+    numberOfItems: geoIpOpenNowItemListElement.length,
+    itemListElement: geoIpOpenNowItemListElement,
+  }
+  : null;
+
+const breadcrumbLd = {
+  '@context': 'https://schema.org',
+  '@type': 'BreadcrumbList',
+  itemListElement: [
+    { '@type': 'ListItem', position: 1, name: siteConfig.name, item: siteConfig.url },
+    { '@type': 'ListItem', position: 2, name: 'Veterinari H24', item: `${siteConfig.url}/veterinari-h24` },
+    ...(locationLabel ? [{ '@type': 'ListItem', position: 3, name: locationLabel, item: canonical }] : []),
+  ],
+};
+---
+
+<BaseLayout
+  title={title}
+  description={description}
+  canonical={canonical}
+  ogImage="https://images.unsplash.com/photo-1583337130417-3346a1be7dee"
+  jsonLd={[collectionLd, ...(geoIpOpenNowLd ? [geoIpOpenNowLd] : []), breadcrumbLd]}
+>
+  {locationLabel && (
+    <nav class="border-b border-gray-200 bg-white" aria-label="Breadcrumb">
+      <div class="mx-auto max-w-7xl px-4 py-3 text-sm sm:px-6 lg:px-8">
+        <ol class="flex flex-wrap items-center gap-2">
+          <li><a href="/" class="text-gray-500 hover:text-gray-700">Home</a></li>
+          <li class="text-gray-400">/</li>
+          <li><a href="/veterinari-h24" class="text-gray-500 hover:text-gray-700">Veterinari H24</a></li>
+          <li class="text-gray-400">/</li>
+          <li class="font-medium text-gray-900">{locationLabel}</li>
+        </ol>
+      </div>
+    </nav>
+  )}
+  <VeterinariH24App
+    client:load
+    initialClinics={initialClinics}
+    initialLocationParam={locationInfo.city && locationInfo.province ? `${locationInfo.city}-${locationInfo.province.toLowerCase()}` : locationParam}
+    initialLocationLabel={locationLabel}
+  />
+  {geoIpOpenNowClinics.length > 0 && (
+    <section id="geoip-open-now-banner" class="bg-gray-50 px-4 pb-6 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-7xl rounded-lg border border-red-100 bg-white p-5 shadow-sm sm:p-6">
+        <div class="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
+          <div class="max-w-3xl">
+            <p class="text-sm font-bold uppercase tracking-wide text-red-600">Aperti ora vicino a te</p>
+          </div>
+          <a href="/veterinari-h24" class="inline-flex items-center justify-center rounded-md border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">
+            Cerca in un'altra localita
+          </a>
+        </div>
+        <div class="mt-5 grid gap-4 md:grid-cols-3">
+          {geoIpOpenNowClinics.map((clinic: any) => (
+            <article class="flex h-full flex-col rounded-lg border border-gray-200 bg-white p-4 shadow-sm">
+              <div class="flex flex-1 flex-col">
+                <div class="flex items-start justify-between gap-3">
+                <a href={`/veterinari/${clinic.slug}`} class="text-base font-bold leading-snug text-gray-900 hover:text-green-700">
+                  {clinic.name}
+                </a>
+                <span class={`shrink-0 rounded-full px-2 py-1 text-xs font-bold text-white ${clinic.isAlwaysOpen ? 'bg-green-600' : 'bg-red-500'}`}>
+                  {clinic.isAlwaysOpen ? 'H24' : 'Aperto'}
+                </span>
+                </div>
+                {clinic.address && <p class="mt-2 text-sm leading-5 text-gray-600">{clinic.address}</p>}
+                <p class="mt-3 text-sm text-gray-700">
+                  A circa <strong>{Number(clinic.distanceKm).toFixed(1)} km</strong>
+                </p>
+                {clinic.ratingValue && (
+                  <p class="mt-1 text-sm text-gray-600">
+                    <span class="font-bold text-gray-900">{Number(clinic.ratingValue).toFixed(1)}</span>
+                    {clinic.reviewsValue ? ` (${clinic.reviewsValue} recensioni)` : ''}
+                  </p>
+                )}
+              </div>
+              <div class="mt-6 grid grid-cols-2 gap-2">
+                {clinic.phone ? (
+                  <a href={`tel:${cleanText(clinic.phone).replace(/\s/g, '')}`} class="inline-flex items-center justify-center rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700">
+                    Chiama
+                  </a>
+                ) : (
+                  <a href={`/veterinari/${clinic.slug}`} class="inline-flex items-center justify-center rounded-md bg-green-600 px-3 py-2 text-sm font-semibold text-white hover:bg-green-700">
+                    Dettagli
+                  </a>
+                )}
+                <a href={`/veterinari/${clinic.slug}`} class="inline-flex items-center justify-center rounded-md border border-gray-300 px-3 py-2 text-sm font-semibold text-gray-700 hover:bg-gray-50">
+                  Scheda
+                </a>
+              </div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+  {popularH24LocationLinks.length > 0 && (
+    <section class="bg-gray-50 px-4 pb-6 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-7xl rounded-lg bg-white p-6 shadow-sm">
+        <div class="max-w-3xl">
+          <p class="text-sm font-bold uppercase tracking-wide text-red-600">Localita piu cercate</p>
+          <h2 class="mt-2 text-xl font-bold text-gray-900">Trova veterinari aperti ora nelle principali citta</h2>
+          <p class="mt-2 text-sm leading-6 text-gray-600">
+            Parti da una localita per vedere pronto soccorso veterinari, cliniche aperte ora o strutture con disponibilita 24 ore su 24, con telefono, indicazioni e mappa.
+          </p>
+        </div>
+        <div class="mt-5 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {popularH24LocationLinks.map((link) => (
+            <a href={link.href} class="group flex items-center justify-between gap-3 rounded-md border border-gray-200 px-4 py-3 text-sm font-semibold text-gray-800 hover:border-red-200 hover:bg-red-50 hover:text-red-700">
+              <span>{link.title}</span>
+              <span class="shrink-0 rounded-full bg-gray-100 px-2 py-1 text-xs text-gray-600 group-hover:bg-white group-hover:text-red-700">
+                {link.count}
+              </span>
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+  {nearbyH24LocationLinks.length > 0 && (
+    <section class="bg-gray-50 px-4 pb-6 sm:px-6 lg:px-8">
+      <div class="mx-auto max-w-7xl rounded-lg bg-white p-6 shadow-sm">
+        <div class="max-w-3xl">
+          <p class="text-sm font-bold uppercase tracking-wide text-red-600">Zone vicine</p>
+          <h2 class="mt-2 text-xl font-bold text-gray-900">
+            Pronto soccorso veterinario e H24 in localita vicine{locationLabel ? ` a ${locationLabel}` : ''}
+          </h2>
+          <p class="mt-2 text-sm leading-6 text-gray-600">
+            Se non trovi subito una struttura disponibile, controlla anche le localita vicine nella stessa provincia.
+          </p>
+        </div>
+        <div class="mt-5 flex flex-wrap gap-2">
+          {nearbyH24LocationLinks.map((link) => (
+            <a href={link.href} class="rounded-full border border-red-200 px-4 py-2 text-sm font-semibold text-red-700 hover:bg-red-50">
+              {link.label}
+            </a>
+          ))}
+        </div>
+      </div>
+    </section>
+  )}
+  <section class="bg-gray-50 px-4 pb-12 sm:px-6 lg:px-8">
+    <div class="mx-auto max-w-7xl rounded-lg border border-green-200 bg-white p-6 shadow-sm sm:flex sm:items-center sm:justify-between sm:gap-6">
+      <div>
+        <h2 class="text-xl font-bold text-gray-900">Sei un veterinario?</h2>
+        <p class="mt-2 text-sm leading-6 text-gray-600">
+          Reclama la tua scheda e aggiorna gli orari di apertura per farti trovare dai proprietari quando cercano un veterinario H24 o aperto ora.
+        </p>
+      </div>
+      <a href="/claim" class="mt-5 inline-flex w-full items-center justify-center rounded-md bg-green-600 px-5 py-3 text-sm font-semibold text-white hover:bg-green-700 sm:mt-0 sm:w-auto">
+        Reclama e aggiorna gli orari
+      </a>
+    </div>
+  </section>
+</BaseLayout>

@@ -1,0 +1,89 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+import { query } from '@/lib/local-db';
+
+const slug = String(Astro.params.slug || '');
+const result = await query<any>(
+  `select a.title, a.slug, a.excerpt, a.content, a.image_url, a.published_at, a.updated_at,
+          c.name as clinic_name, c.slug as clinic_slug, c.city, c.province
+     from public.veterinary_blog_articles a
+     join public.clinics c on c.id = a.clinic_id
+    where a.slug = $1 and a.status = 'published'
+    limit 1`,
+  [slug]
+).catch(() => ({ rows: [] }));
+
+const article = result.rows[0];
+if (!article) return Astro.redirect('/404', 302);
+
+const canonical = `${siteConfig.url}/blog/${article.slug}`;
+const description = article.excerpt || article.content.replace(/\s+/g, ' ').slice(0, 155);
+const publishedIso = article.published_at ? new Date(article.published_at).toISOString() : undefined;
+const modifiedIso = article.updated_at ? new Date(article.updated_at).toISOString() : publishedIso;
+const paragraphs = article.content.split(/\n{2,}/).map((value: string) => value.trim()).filter(Boolean);
+const jsonLd = {
+  '@context': 'https://schema.org',
+  '@type': 'Article',
+  headline: article.title,
+  description,
+  image: article.image_url || undefined,
+  datePublished: publishedIso,
+  dateModified: modifiedIso,
+  author: {
+    '@type': 'Organization',
+    name: article.clinic_name,
+    url: `${siteConfig.url}/veterinari/${article.clinic_slug}`,
+  },
+  publisher: {
+    '@type': 'Organization',
+    name: siteConfig.name,
+    url: siteConfig.url,
+  },
+  mainEntityOfPage: canonical,
+};
+---
+
+<BaseLayout
+  title={`${article.title} | ${siteConfig.name}`}
+  description={description}
+  canonical={canonical}
+  ogImage={article.image_url || undefined}
+  ogType="article"
+  jsonLd={jsonLd}
+>
+  <article class="bg-white">
+    <header class="border-b border-gray-200">
+      <div class="mx-auto max-w-4xl px-4 py-10 sm:px-6 sm:py-14">
+        <a href="/blog" class="text-sm font-semibold text-green-700">Blog Veterinario</a>
+        <h1 class="mt-4 text-4xl font-bold leading-tight text-gray-950 sm:text-5xl">{article.title}</h1>
+        {article.excerpt && <p class="mt-5 text-xl leading-8 text-gray-600">{article.excerpt}</p>}
+        <div class="mt-6 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-gray-600">
+          <span>Scritto da</span>
+          <a href={`/veterinari/${article.clinic_slug}`} class="font-bold text-green-700">{article.clinic_name}</a>
+          {article.city && <span>· {article.city}{article.province ? `, ${article.province}` : ''}</span>}
+          {article.published_at && <span>· {new Date(article.published_at).toLocaleDateString('it-IT')}</span>}
+        </div>
+      </div>
+    </header>
+
+    {article.image_url && (
+      <div class="mx-auto max-w-5xl px-4 pt-8 sm:px-6">
+        <img src={article.image_url} alt={article.title} class="max-h-[34rem] w-full rounded-lg object-cover" />
+      </div>
+    )}
+
+    <div class="mx-auto max-w-3xl px-4 py-10 sm:px-6 sm:py-14">
+      <div class="space-y-6 text-lg leading-8 text-gray-800">
+        {paragraphs.map((paragraph: string) => <p class="whitespace-pre-line">{paragraph}</p>)}
+      </div>
+
+      <aside class="mt-12 border-t border-gray-200 pt-8">
+        <p class="text-sm font-semibold uppercase text-green-700">Struttura autrice</p>
+        <h2 class="mt-2 text-2xl font-bold text-gray-950">{article.clinic_name}</h2>
+        <p class="mt-3 text-sm leading-6 text-gray-600">Consulta contatti, servizi e informazioni aggiornate nella scheda della struttura.</p>
+        <a href={`/veterinari/${article.clinic_slug}`} class="mt-5 inline-flex rounded-md bg-green-700 px-4 py-2.5 font-semibold text-white hover:bg-green-800">Apri la scheda</a>
+      </aside>
+    </div>
+  </article>
+</BaseLayout>

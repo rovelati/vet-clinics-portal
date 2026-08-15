@@ -1,0 +1,16 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import AdminIntegratoriApp from '@/components/react/AdminIntegratoriApp.jsx';
+import { siteConfig } from '@/config/site';
+
+const { id } = Astro.params;
+---
+
+<BaseLayout
+  title={`Modifica Integratore | ${siteConfig.name}`}
+  description="Modifica articolo integratore."
+  canonical={`${siteConfig.url}/admin-test/integratori/${id}/edit`}
+  noindex={true}
+>
+  <AdminIntegratoriApp mode="editor" articleId={id} client:load />
+</BaseLayout>

@@ -1,0 +1,17 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import SimpleLanding from '@/components/SimpleLanding.astro';
+import { siteConfig } from '@/config/site';
+---
+
+<BaseLayout
+  title={`Servizi Veterinari | ${siteConfig.name}`}
+  description="Scopri visite, diagnostica, chirurgia, vaccinazioni e altri servizi veterinari."
+  canonical={`${siteConfig.url}/servizi`}
+>
+  <SimpleLanding
+    eyebrow="Servizi"
+    title="Servizi Veterinari"
+    description="Esplora i principali servizi offerti da cliniche e ambulatori veterinari."
+  />
+</BaseLayout>

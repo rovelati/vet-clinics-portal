@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import AdminTestApp from '@/components/react/AdminTestApp.jsx';
+import { siteConfig } from '@/config/site';
+---
+
+<BaseLayout
+  title={`Admin Test | ${siteConfig.name}`}
+  description={`Console amministrativa test di ${siteConfig.name}.`}
+  canonical={`${siteConfig.url}/admin-test`}
+  noindex={true}
+>
+  <AdminTestApp client:load />
+</BaseLayout>

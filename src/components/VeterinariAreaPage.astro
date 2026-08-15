@@ -1,0 +1,92 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import CercaVeterinariApp from '@/components/react/CercaVeterinariApp.jsx';
+import { siteConfig } from '@/config/site';
+import { supabasePublicServer } from '@/lib/supabase';
+import { clinicImage } from '@/lib/clinics';
+import { canonicalVeterinariProvincePath, canonicalVeterinariRegionPath } from '@/lib/seo-urls';
+
+interface Props {
+  kind: 'province' | 'region';
+  label: string;
+}
+
+const { kind, label } = Astro.props;
+const cleanLabel = label.replace(/"/g, '').trim();
+const canonicalPath = kind === 'province'
+  ? canonicalVeterinariProvincePath(cleanLabel)
+  : canonicalVeterinariRegionPath(cleanLabel);
+const canonical = `${siteConfig.url}${canonicalPath}`;
+const areaLabel = kind === 'province' ? cleanLabel.toUpperCase() : cleanLabel;
+const title = kind === 'province'
+  ? `Veterinari in provincia ${areaLabel}: cliniche e ambulatori | ${siteConfig.name}`
+  : `Veterinari in ${areaLabel}: cliniche e ambulatori | ${siteConfig.name}`;
+const description = kind === 'province'
+  ? `Trova veterinari, cliniche e ambulatori veterinari in provincia ${areaLabel}. Consulta indirizzi, telefono, recensioni, orari e mappa.`
+  : `Trova veterinari, cliniche e ambulatori veterinari in ${areaLabel}. Consulta indirizzi, telefono, recensioni, orari e mappa.`;
+
+async function loadClinics() {
+  if (!supabasePublicServer) return [];
+  const field = kind === 'province' ? 'province' : 'region';
+  const value = kind === 'province' ? cleanLabel.toUpperCase() : cleanLabel;
+  const { data, error } = await supabasePublicServer
+    .from('clinics')
+    .select(`
+      id, name, address, phone, slug,
+      rating_avg_cached, rating_count_cached,
+      lat, lng, hours, raw_import, gallery_images, created_at
+    `)
+    .in('status', ['pubblicata', 'in_revisione'])
+    .not('slug', 'is', null)
+    .ilike(`raw_import->>${field}`, `%${value.replace(/[%,]/g, ' ')}%`)
+    .order('rating_avg_cached', { ascending: false, nullsFirst: false })
+    .order('rating_count_cached', { ascending: false, nullsFirst: false })
+    .limit(80);
+
+  if (error) {
+    console.error('Errore caricamento pagina veterinari area:', error.message);
+    return [];
+  }
+
+  return data ?? [];
+}
+
+const clinics = await loadClinics();
+const itemListElement = clinics.slice(0, 20).map((clinic: any, index: number) => {
+  return {
+    '@type': 'ListItem',
+    position: index + 1,
+    item: {
+      '@type': ['VeterinaryCare', 'LocalBusiness'],
+      name: clinic.name,
+      url: `${siteConfig.url}/veterinari/${clinic.slug}`,
+      telephone: clinic.phone || undefined,
+      address: clinic.address || undefined,
+      image: clinicImage(clinic),
+    },
+  };
+});
+
+const collectionLd = {
+  '@context': 'https://schema.org',
+  '@type': 'CollectionPage',
+  name: title,
+  description,
+  url: canonical,
+  mainEntity: {
+    '@type': 'ItemList',
+    name: title,
+    numberOfItems: itemListElement.length,
+    itemListElement,
+  },
+};
+---
+
+<BaseLayout title={title} description={description} canonical={canonical} jsonLd={collectionLd}>
+  <CercaVeterinariApp
+    client:load
+    initialClinics={clinics}
+    initialQuery="veterinari"
+    initialLocation={areaLabel}
+  />
+</BaseLayout>

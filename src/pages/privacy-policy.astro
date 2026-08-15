@@ -1,0 +1,38 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+
+const title = `Privacy Policy | ${siteConfig.name}`;
+const description = `Informativa privacy di ${siteConfig.name}: dati trattati, finalita, diritti degli utenti e contatti.`;
+---
+
+<BaseLayout title={title} description={description} canonical={`${siteConfig.url}/privacy-policy`}>
+  <main class="bg-gray-50 px-4 py-12 sm:px-6 lg:px-8">
+    <article class="mx-auto max-w-4xl rounded-lg bg-white p-8 shadow-sm md:p-12">
+      <h1 class="text-3xl font-bold text-gray-900">Privacy Policy</h1>
+      <p class="mt-4 text-sm text-gray-500">Ultimo aggiornamento: 14 giugno 2026</p>
+      <div class="mt-8 space-y-6 text-gray-700">
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Titolare del trattamento</h2>
+          <p class="mt-2">{siteConfig.name} tutela la privacy degli utenti. Per richieste relative ai dati personali puoi scrivere a <a href={`mailto:${siteConfig.publicEmail}`} class="text-green-700 underline">{siteConfig.publicEmail}</a>.</p>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Dati trattati</h2>
+          <ul class="mt-2 list-disc space-y-2 pl-5">
+            <li>Dati inviati volontariamente tramite email, registrazione, claim o richieste di aggiornamento.</li>
+            <li>Dati tecnici di navigazione, come indirizzo IP, browser, log e preferenze cookie.</li>
+            <li>Dati pubblici relativi alle cliniche veterinarie, raccolti e organizzati per finalita informative.</li>
+          </ul>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Finalita</h2>
+          <p class="mt-2">Usiamo i dati per gestire richieste, migliorare il servizio, mantenere le schede, abilitare funzionalita di ricerca e adempiere a obblighi tecnici o normativi.</p>
+        </section>
+        <section>
+          <h2 class="text-xl font-semibold text-gray-900">Diritti dell'utente</h2>
+          <p class="mt-2">Puoi chiedere accesso, rettifica, cancellazione, limitazione o opposizione al trattamento nei casi previsti dal GDPR.</p>
+        </section>
+      </div>
+    </article>
+  </main>
+</BaseLayout>

@@ -1,0 +1,9 @@
+---
+import VeterinariCityPage from '@/components/VeterinariCityPage.astro';
+import { cityNameFromSlug, provinceLabel } from '@/lib/seo-urls';
+
+const province = provinceLabel(Astro.params.province || '');
+const cityName = cityNameFromSlug(Astro.params.city || '');
+---
+
+<VeterinariCityPage cityName={cityName} province={province} />

@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import VetDashboardApp from '@/components/react/VetDashboardApp.jsx';
+import { siteConfig } from '@/config/site';
+---
+
+<BaseLayout
+  title={`Dashboard veterinario | ${siteConfig.name}`}
+  description="Gestisci la scheda veterinaria reclamata."
+  canonical={`${siteConfig.url}/dashboard/veterinario`}
+  noindex={true}
+>
+  <VetDashboardApp client:load />
+</BaseLayout>

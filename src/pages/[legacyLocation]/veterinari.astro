@@ -1,0 +1,17 @@
+---
+const legacyLocation = String(Astro.params.legacyLocation || '').trim().toLowerCase();
+const match = legacyLocation.match(/^(.+)-([a-z]{2})$/);
+
+if (!match) {
+  return Astro.redirect('/cerca-veterinari', 301);
+}
+
+const citySlug = match[1].replace(/[^a-z0-9-]/g, '').replace(/-+/g, '-').replace(/^-|-$/g, '');
+const provinceSlug = match[2];
+
+if (!citySlug) {
+  return Astro.redirect('/cerca-veterinari', 301);
+}
+
+return Astro.redirect(`/veterinari/${provinceSlug}/${citySlug}`, 301);
+---

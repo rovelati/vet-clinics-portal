@@ -1,0 +1,9 @@
+---
+import H24Page from '@/components/H24Page.astro';
+import { cityNameFromSlug, provinceLabel } from '@/lib/seo-urls';
+
+const province = provinceLabel(Astro.params.province || '');
+const cityName = cityNameFromSlug(Astro.params.city || '');
+---
+
+<H24Page cityName={cityName} province={province} />

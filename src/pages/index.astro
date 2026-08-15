@@ -1,0 +1,488 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import { siteConfig } from '@/config/site';
+import SearchPanel from '@/components/SearchPanel.astro';
+import ClinicCard from '@/components/ClinicCard.astro';
+import { getFeaturedClinics, getNearbyClinicsFromVisitor } from '@/lib/clinics';
+
+function cleanHeader(value: string | null) {
+  if (!value) return '';
+  try {
+    return decodeURIComponent(value).replace(/\+/g, ' ').trim();
+  } catch {
+    return value.replace(/\+/g, ' ').trim();
+  }
+}
+
+function cleanProvince(value: string) {
+  return value.replace(/^IT[-_]/i, '').trim().toUpperCase();
+}
+
+function numberHeader(value: string | null) {
+  if (!value) return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function numberValue(value: unknown) {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function savedLocationFromCookie(value: string | undefined) {
+  if (!value) return null;
+  try {
+    const parsed = JSON.parse(decodeURIComponent(value));
+    const timestamp = numberValue(parsed?.timestamp);
+    if (timestamp && Date.now() - timestamp > 30 * 24 * 60 * 60 * 1000) return null;
+    const city = cleanHeader(parsed?.cityName || parsed?.city || '');
+    const province = cleanProvince(cleanHeader(parsed?.province || ''));
+    const lat = numberValue(parsed?.lat);
+    const lng = numberValue(parsed?.lng);
+    const label = cleanHeader(parsed?.label || parsed?.display_name?.split(',')?.[0] || city);
+    if (!city && !province && (lat === null || lng === null)) return null;
+    return { city, province, lat, lng, label };
+  } catch {
+    return null;
+  }
+}
+
+const baseJsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: siteConfig.name,
+    url: siteConfig.url,
+    logo: `${siteConfig.url}/favicon.svg`,
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'WebSite',
+    name: siteConfig.name,
+    url: siteConfig.url,
+    potentialAction: {
+      '@type': 'SearchAction',
+      target: `${siteConfig.url}/cerca-veterinari?query={search_term_string}`,
+      'query-input': 'required name=search_term_string',
+    },
+  },
+];
+
+const heroActions = [
+  {
+    label: 'Veterinari H24',
+    helper: 'Per urgenze e strutture aperte',
+    href: '/veterinari-h24',
+  },
+  {
+    label: 'Quanto costa?',
+    helper: 'Prezzi indicativi delle prestazioni',
+    href: '/quanto-costa',
+  },
+  {
+    label: 'Diventa Pet Lover',
+    helper: 'Registra il tuo animale gratis',
+    href: '/pet-lover',
+  },
+];
+
+const integratoriHighlights = [
+  {
+    slug: 'omega-3-per-cani',
+    name: 'Omega-3 per Cani',
+    icon: '🐟',
+    description: 'Acidi grassi essenziali per pelo lucido, pelle sana e azione anti-infiammatoria.',
+  },
+  {
+    slug: 'glucosamina-plus',
+    name: 'Glucosamina Plus',
+    icon: '🦴',
+    description: 'Supporto articolare per cani anziani o sportivi con glucosamina e condroitina.',
+  },
+  {
+    slug: 'probiotici-digestivi',
+    name: 'Probiotici Digestivi',
+    icon: '🦠',
+    description: 'Riequilibrano la flora intestinale e migliorano la digestione del tuo animale.',
+  },
+];
+
+const blogPosts = [
+  {
+    slug: 'come-riconoscere-i-sintomi-di-malattia-nel-tuo-cane',
+    title: 'Come Riconoscere i Sintomi di Malattia nel Tuo Cane',
+    excerpt: 'Impara a identificare i segnali che indicano quando il tuo cane potrebbe non stare bene e quando e necessario consultare un veterinario...',
+    date: '18 Giu 2026',
+    dateIso: '2026-06-18',
+    readTime: '8 min',
+    image: 'https://images.unsplash.com/photo-1587300003388-59208cc962cb',
+  },
+  {
+    slug: 'alimentazione-corretta-per-gatti-anziani',
+    title: 'Alimentazione Corretta per Gatti Anziani',
+    excerpt: "Scopri come adattare la dieta del tuo gatto alle esigenze nutrizionali della terza eta per mantenerlo in salute...",
+    date: '4 Giu 2026',
+    dateIso: '2026-06-04',
+    readTime: '6 min',
+    image: 'https://images.unsplash.com/photo-1573865526739-10659fec78a5',
+  },
+  {
+    slug: 'vaccinazioni-essenziali-per-cuccioli',
+    title: 'Vaccinazioni Essenziali per Cuccioli',
+    excerpt: 'Guida completa alle vaccinazioni obbligatorie e raccomandate per proteggere la salute del tuo cucciolo...',
+    date: '22 Mag 2026',
+    dateIso: '2026-05-22',
+    readTime: '7 min',
+    image: 'https://images.unsplash.com/photo-1601758228041-f3b2795255f1',
+  },
+];
+
+const priceHighlights = [
+  {
+    name: 'Asportazione corpo estraneo endonasale',
+    category: 'Chirurgia',
+    price: '~50 €',
+    href: '/quanto-costa/asportazione-corpo-estraneo-endonasale',
+  },
+  {
+    name: 'Gastroscopia',
+    category: 'Esami',
+    price: '~350 €',
+    href: '/quanto-costa/gastroscopia',
+  },
+  {
+    name: 'Vaccino rabbia (valenza triennale)',
+    category: 'Vaccinazioni',
+    price: '~65 €',
+    href: '/quanto-costa/vaccino-rabbia-valenza-triennale',
+  },
+];
+
+const petLoverHighlights = [
+  ['Scheda animale', 'Dati, foto, microchip, razza, peso e informazioni sanitarie sempre ordinate.'],
+  ['Vaccini e scadenze', 'Promemoria per richiami, antiparassitari, farmaci e controlli periodici.'],
+  ['Link al veterinario', 'Condivisione privata e revocabile della scheda quando chiedi una visita.'],
+  ['Spese e documenti', 'Archivio utile per fatture, 730, assicurazioni e rimborsi.'],
+];
+
+const requestHeaders = Astro.request.headers;
+const visitorCity = cleanHeader(
+  requestHeaders.get('cf-ipcity')
+  || requestHeaders.get('x-vercel-ip-city')
+  || requestHeaders.get('x-forwarded-ip-city')
+);
+const visitorProvince = cleanProvince(cleanHeader(
+  requestHeaders.get('cf-region-code')
+  || requestHeaders.get('x-vercel-ip-country-region')
+  || requestHeaders.get('x-forwarded-ip-region')
+));
+const visitorLat = numberHeader(requestHeaders.get('cf-iplatitude') || requestHeaders.get('x-vercel-ip-latitude'));
+const visitorLng = numberHeader(requestHeaders.get('cf-iplongitude') || requestHeaders.get('x-vercel-ip-longitude'));
+const savedLocation = savedLocationFromCookie(Astro.cookies.get('vet_last_location')?.value);
+const effectiveLocation = savedLocation || {
+  city: visitorCity,
+  province: visitorProvince,
+  lat: visitorLat,
+  lng: visitorLng,
+  label: visitorCity,
+};
+const nearbyClinics = await getNearbyClinicsFromVisitor({
+  city: effectiveLocation.city,
+  province: effectiveLocation.province,
+  lat: effectiveLocation.lat,
+  lng: effectiveLocation.lng,
+  limit: 6,
+});
+const hasVisitorLocation = Boolean(effectiveLocation.city || (effectiveLocation.lat !== null && effectiveLocation.lng !== null));
+const featuredClinics = nearbyClinics.length ? nearbyClinics : await getFeaturedClinics(6);
+const clinicSectionTitle = nearbyClinics.length ? 'Cliniche veterinarie vicino a te' : 'Cliniche Veterinarie in Evidenza';
+const clinicSectionDescription = nearbyClinics.length
+  ? savedLocation
+    ? `Selezione basata sull'ultima localita cercata${effectiveLocation.label ? `: ${effectiveLocation.label}` : ''}. Puoi cambiarla dalla ricerca.`
+    : `Selezione stimata dalla posizione della connessione${visitorCity ? `, zona ${visitorCity}` : ''}. Puoi cambiare localita dalla ricerca.`
+  : 'Alcune strutture presenti nel database, ordinate per valutazioni e recensioni disponibili.';
+const clinicsItemListLd = {
+  '@context': 'https://schema.org',
+  '@type': 'ItemList',
+  name: nearbyClinics.length ? 'Cliniche veterinarie vicino al visitatore' : 'Cliniche veterinarie in evidenza',
+  itemListElement: featuredClinics.map((clinic, index) => {
+    const lat = numberValue(clinic.lat);
+    const lng = numberValue(clinic.lng);
+    const city = clinic.raw_import?.city?.replace(/"/g, '').trim();
+    const province = clinic.raw_import?.province?.replace(/"/g, '').trim();
+    const item: Record<string, unknown> = {
+      '@type': ['VeterinaryCare', 'LocalBusiness'],
+      name: clinic.name,
+      url: clinic.slug ? `${siteConfig.url}/veterinari/${clinic.slug}` : siteConfig.url,
+      address: {
+        '@type': 'PostalAddress',
+        streetAddress: clinic.address || undefined,
+        addressLocality: city || undefined,
+        addressRegion: province || undefined,
+        addressCountry: 'IT',
+      },
+      telephone: clinic.phone || undefined,
+    };
+
+    if (lat !== null && lng !== null) {
+      item.geo = {
+        '@type': 'GeoCoordinates',
+        latitude: lat,
+        longitude: lng,
+      };
+    }
+
+    return {
+      '@type': 'ListItem',
+      position: index + 1,
+      item,
+    };
+  }),
+};
+const blogPostsItemListLd = {
+  '@context': 'https://schema.org',
+  '@type': 'ItemList',
+  name: 'Ultimi articoli del blog veterinario',
+  itemListElement: blogPosts.map((post, index) => ({
+    '@type': 'ListItem',
+    position: index + 1,
+    item: {
+      '@type': 'BlogPosting',
+      headline: post.title,
+      description: post.excerpt.replace(/\.\.\.$/, ''),
+      image: post.image,
+      datePublished: post.dateIso,
+      dateModified: post.dateIso,
+      author: {
+        '@type': 'Organization',
+        name: siteConfig.name,
+        url: siteConfig.url,
+      },
+      publisher: {
+        '@type': 'Organization',
+        name: siteConfig.name,
+        logo: {
+          '@type': 'ImageObject',
+          url: `${siteConfig.url}/favicon.svg`,
+        },
+      },
+      url: `${siteConfig.url}/blog#${post.slug}`,
+      mainEntityOfPage: `${siteConfig.url}/blog`,
+      inLanguage: 'it-IT',
+      timeRequired: `PT${post.readTime.replace(/\D/g, '') || '5'}M`,
+    },
+  })),
+};
+const jsonLd = [...baseJsonLd, clinicsItemListLd, blogPostsItemListLd];
+---
+
+<BaseLayout
+  title="Veterinari.org - Trova il Veterinario Perfetto per il Tuo Animale"
+  description={siteConfig.defaultDescription}
+  jsonLd={jsonLd}
+>
+  <section class="relative overflow-hidden bg-gradient-to-br from-emerald-950 via-green-800 to-slate-950 py-12 text-white sm:py-16 lg:py-20">
+    <div class="absolute inset-0 bg-[radial-gradient(circle_at_25%_20%,rgba(34,197,94,0.22),transparent_34%),radial-gradient(circle_at_80%_10%,rgba(56,189,248,0.16),transparent_30%)]"></div>
+    <div class="absolute inset-0 bg-black/25"></div>
+    <div class="relative mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div class="mx-auto mb-8 max-w-4xl text-center sm:mb-10">
+        <h1 class="mb-4 text-4xl font-extrabold leading-tight text-white sm:text-5xl md:text-6xl">
+          {siteConfig.name}
+        </h1>
+        <p class="mx-auto mb-4 flex max-w-3xl items-center justify-center gap-3 text-2xl font-bold leading-snug text-white sm:text-3xl">
+          <span>Trova il veterinario giusto per il tuo animale</span>
+          <img src="/favicon.svg" alt="" class="h-9 w-9 shrink-0 rounded-xl bg-white p-1.5 shadow-sm sm:h-10 sm:w-10" />
+        </p>
+        <div class="mx-auto mt-6 grid max-w-4xl grid-cols-1 gap-2 text-left sm:grid-cols-3">
+          {heroActions.map((action) => (
+            <a
+              href={action.href}
+              class="group flex min-h-20 items-center gap-3 rounded-lg border border-white/20 bg-white/10 p-3 text-white shadow-sm backdrop-blur transition hover:border-white/50 hover:bg-white/18 focus:outline-none focus:ring-2 focus:ring-white/70"
+            >
+              <span class="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-white text-green-700">
+                <img src="/favicon.svg" alt="" class="h-6 w-6" />
+              </span>
+              <span class="min-w-0">
+                <span class="block text-base font-extrabold leading-tight">{action.label}</span>
+                <span class="mt-1 block text-sm font-semibold leading-snug text-green-50/90">{action.helper}</span>
+              </span>
+            </a>
+          ))}
+        </div>
+      </div>
+
+      <div class="mx-auto max-w-4xl">
+        <SearchPanel />
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-gray-50 py-16">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div class="mb-12 text-center">
+        <h2 class="mb-4 text-3xl font-bold text-gray-900 md:text-4xl">{clinicSectionTitle}</h2>
+        <p class="mx-auto max-w-2xl text-xl text-gray-600">
+          {clinicSectionDescription}
+        </p>
+        {hasVisitorLocation && !nearbyClinics.length && (
+          <p class="mx-auto mt-3 max-w-2xl text-sm font-medium text-gray-500">
+            Non abbiamo trovato una corrispondenza locale affidabile dalla posizione IP: mostriamo una selezione nazionale.
+          </p>
+        )}
+      </div>
+
+      {featuredClinics.length > 0 ? (
+        <div class="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
+          {featuredClinics.map((clinic) => <ClinicCard clinic={clinic} />)}
+        </div>
+      ) : (
+        <div class="rounded-lg bg-white p-8 text-center text-gray-600 shadow-lg">
+          Stiamo aggiornando la selezione delle cliniche. Usa la ricerca per trovare veterinari nella tua zona.
+        </div>
+      )}
+    </div>
+  </section>
+
+  <section class="bg-white py-16">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div class="mb-12 text-center">
+        <h2 class="mb-4 text-3xl font-bold text-gray-900 md:text-4xl">Ultimi Articoli del Blog</h2>
+        <p class="mx-auto max-w-2xl text-xl text-gray-600">
+          Consigli e informazioni utili per la cura dei tuoi animali domestici
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
+        {blogPosts.map((post) => (
+          <article class="vet-card-hover overflow-hidden rounded-lg bg-white shadow-lg">
+            <a href="/blog" class="block h-full">
+              <img src={post.image} alt={post.title} class="h-48 w-full object-cover" loading="lazy" />
+              <div class="p-6">
+                <div class="mb-3 flex items-center text-sm text-gray-500">
+                  <span>{post.date}</span>
+                  <span class="mx-2">•</span>
+                  <span>{post.readTime} lettura</span>
+                </div>
+                <h3 class="mb-3 text-xl font-bold text-gray-900">{post.title}</h3>
+                <p class="mb-4 leading-6 text-gray-600">{post.excerpt}</p>
+                <span class="inline-flex w-full justify-center rounded-md border border-gray-300 px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50">
+                  Leggi di piu
+                </span>
+              </div>
+            </a>
+          </article>
+        ))}
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-gradient-to-br from-purple-50 to-pink-50 py-16">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div class="mb-12 text-center">
+        <h2 class="mb-4 text-3xl font-bold text-gray-900 md:text-4xl">Guida agli Integratori per Animali</h2>
+        <p class="mx-auto max-w-2xl text-xl text-gray-600">
+          Informazioni utili sui principali integratori per il benessere di cani e gatti
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 gap-8 md:grid-cols-3">
+        {integratoriHighlights.map((item) => (
+          <a href={`/integratori/${item.slug}`} class="vet-card-hover block h-full rounded-lg bg-white p-6 shadow-lg">
+            <div class="mb-3 text-4xl" aria-hidden="true">{item.icon}</div>
+            <h3 class="mb-2 text-lg font-bold text-gray-900">{item.name}</h3>
+            <p class="text-sm leading-6 text-gray-600">{item.description}</p>
+          </a>
+        ))}
+      </div>
+
+      <div class="mt-8 text-center">
+        <a href="/integratori" class="inline-flex rounded-md border border-purple-600 px-5 py-3 font-semibold text-purple-700 hover:bg-purple-50">
+          Vedi la guida completa
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-gray-50 py-16">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div class="mb-12 text-center">
+        <h2 class="mb-4 text-3xl font-bold text-gray-900 md:text-4xl">Quanto Costa dal Veterinario?</h2>
+        <p class="mx-auto max-w-2xl text-xl text-gray-600">
+          Scopri i costi medi delle prestazioni veterinarie piu richieste in Italia
+        </p>
+      </div>
+
+      <div class="grid grid-cols-1 gap-8 md:grid-cols-2 lg:grid-cols-3">
+        {priceHighlights.map((service) => (
+          <a href={service.href} class="vet-card-hover block h-full rounded-lg bg-white p-6 shadow-lg">
+            <div class="mb-3 flex items-center justify-between gap-3">
+              <span class="rounded-full bg-green-50 px-3 py-1 text-xs font-semibold text-green-700">{service.category}</span>
+              <span class="text-lg font-bold text-green-700">{service.price}</span>
+            </div>
+            <h3 class="mb-4 text-xl font-bold text-gray-900">{service.name}</h3>
+            <span class="inline-flex w-full justify-center rounded-md border border-gray-300 px-4 py-2 font-semibold text-gray-700 hover:bg-gray-50">
+              Scopri di piu
+            </span>
+          </a>
+        ))}
+      </div>
+
+      <div class="mt-8 text-center">
+        <a href="/quanto-costa" class="inline-flex rounded-md border border-green-600 px-5 py-3 font-semibold text-green-700 hover:bg-green-50">
+          Vedi tutte le prestazioni
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-gradient-to-r from-green-600 to-blue-600 py-16 text-white">
+    <div class="mx-auto max-w-4xl px-4 text-center sm:px-6 lg:px-8">
+      <h2 class="mb-6 text-3xl font-bold md:text-4xl">Sei un Veterinario?</h2>
+      <p class="mb-8 text-xl text-green-100">
+        Unisciti alla nostra piattaforma e raggiungi migliaia di proprietari di animali
+      </p>
+      <div class="flex flex-col justify-center gap-4 sm:flex-row">
+        <a href="/register?type=veterinario" rel="nofollow" class="inline-flex justify-center rounded-md bg-white px-6 py-3 font-semibold text-green-700 shadow hover:bg-gray-100">
+          Registra il tuo Studio
+        </a>
+        <a href="/vantaggi-veterinari" class="inline-flex justify-center rounded-md border border-white px-6 py-3 font-semibold text-white hover:bg-white hover:text-green-700">
+          Scopri i Vantaggi
+        </a>
+      </div>
+    </div>
+  </section>
+
+  <section class="bg-white py-16">
+    <div class="mx-auto max-w-7xl px-4 sm:px-6 lg:px-8">
+      <div class="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+        <div>
+          <p class="text-sm font-semibold uppercase text-green-700">Area clienti Pet Lover</p>
+          <h2 class="mt-3 text-3xl font-bold text-gray-900 md:text-4xl">Hai un animale? Crea la sua zampa digitale</h2>
+          <p class="mt-5 text-xl leading-8 text-gray-600">
+            Registrati gratis, aggiungi uno o piu animali e tieni insieme dati sanitari, vaccinazioni, spese e documenti. Quando contatti un veterinario puoi condividere subito una scheda privata.
+          </p>
+          <div class="mt-7 flex flex-col gap-4 sm:flex-row">
+            <a href="/register?type=proprietario&redirect=/dashboard/pet-lover" rel="nofollow" class="inline-flex justify-center rounded-md bg-green-600 px-6 py-3 font-semibold text-white shadow hover:bg-green-700">
+              Registrati come Pet Lover
+            </a>
+            <a href="/pet-lover" class="inline-flex justify-center rounded-md border border-green-600 px-6 py-3 font-semibold text-green-700 hover:bg-green-50">
+              Scopri l'area Pet Lover
+            </a>
+          </div>
+        </div>
+        <div class="grid gap-4 sm:grid-cols-2">
+          {petLoverHighlights.map(([title, text]) => (
+            <a href="/pet-lover" class="rounded-lg border border-gray-200 bg-gray-50 p-5 transition hover:border-green-300 hover:bg-green-50">
+              <div class="grid h-10 w-10 place-items-center rounded-md bg-green-100">
+                <img src="/favicon.svg" alt="" class="h-6 w-6" />
+              </div>
+              <h3 class="mt-4 text-lg font-bold text-gray-900">{title}</h3>
+              <p class="mt-2 text-sm leading-6 text-gray-600">{text}</p>
+            </a>
+          ))}
+        </div>
+      </div>
+    </div>
+  </section>
+</BaseLayout>

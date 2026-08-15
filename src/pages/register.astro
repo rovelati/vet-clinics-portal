@@ -1,0 +1,16 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import RegisterApp from '@/components/react/RegisterApp.jsx';
+import { siteConfig } from '@/config/site';
+
+Astro.response.headers.set('X-Robots-Tag', 'noindex, nofollow');
+---
+
+<BaseLayout
+  title={`Registrazione - Crea il tuo Account | ${siteConfig.name}`}
+  description={`Registrati su ${siteConfig.name} per accedere ai servizi veterinari e gestire il tuo profilo.`}
+  canonical={`${siteConfig.url}/register`}
+  noindex={true}
+>
+  <RegisterApp client:load />
+</BaseLayout>

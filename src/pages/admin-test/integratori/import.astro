@@ -1,0 +1,14 @@
+---
+import BaseLayout from '@/layouts/BaseLayout.astro';
+import AdminIntegratoriApp from '@/components/react/AdminIntegratoriApp.jsx';
+import { siteConfig } from '@/config/site';
+---
+
+<BaseLayout
+  title={`Import Integratori | ${siteConfig.name}`}
+  description="Import CSV articoli integratori."
+  canonical={`${siteConfig.url}/admin-test/integratori/import`}
+  noindex={true}
+>
+  <AdminIntegratoriApp mode="import" client:load />
+</BaseLayout>
