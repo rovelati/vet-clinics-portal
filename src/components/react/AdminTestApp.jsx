@@ -56,6 +56,7 @@ const navItems = [
   { id: 'claims', label: 'Claim', description: 'Richieste cliniche', icon: CheckCircle2 },
   { id: 'blog', label: 'Blog', description: 'Revisione articoli', icon: MessageSquare },
   { id: 'quotes', label: 'Preventivi', description: 'Richieste inviate', icon: Mail },
+  { id: 'marketing', label: 'Email', description: 'Invii e CTR', icon: BarChart3 },
   { id: 'clinics', label: 'Cliniche', description: 'Schede e arricchimenti', icon: Stethoscope },
   { id: 'taxonomy', label: 'Tassonomia', description: 'Servizi e prezzi', icon: ListTree },
   { id: 'cms', label: 'CMS', description: 'Integratori', icon: FileSpreadsheet },
@@ -258,6 +259,7 @@ export default function AdminTestApp() {
         {active === 'claims' && <ClaimsSection api={api} notify={notify} />}
         {active === 'blog' && <BlogReviewSection api={api} notify={notify} />}
         {active === 'quotes' && <QuotesSection api={api} notify={notify} />}
+        {active === 'marketing' && <MarketingEmailSection api={api} notify={notify} />}
         {active === 'clinics' && <ClinicsSection api={api} token={token} notify={notify} taxonomy={boot?.taxonomy || []} />}
         {active === 'taxonomy' && <TaxonomySection api={api} notify={notify} initial={boot?.taxonomy || []} />}
         {active === 'cms' && <CmsSection />}
@@ -818,6 +820,235 @@ function QuotesSection({ api, notify }) {
           );
         })}
         {!rows.length && <EmptyRow cols={6} text="Nessuna richiesta preventivo trovata." />}
+      </DataTable>
+    </section>
+  );
+}
+
+function MarketingEmailSection({ api, notify }) {
+  const [report, setReport] = useState({ summary: {}, daily: [], queues: [], targets: [], rows: [] });
+  const [search, setSearch] = useState('');
+  const [status, setStatus] = useState('all');
+  const [days, setDays] = useState('30');
+  const [loading, setLoading] = useState(false);
+  const [expanded, setExpanded] = useState(null);
+
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const data = await api('marketing.report', { search, status, days: Number(days), limit: 120 });
+      setReport({
+        summary: data.summary || {},
+        daily: data.daily || [],
+        queues: data.queues || [],
+        targets: data.targets || [],
+        rows: data.rows || [],
+      });
+    } catch (error) {
+      notify({ variant: 'destructive', title: 'Errore report email', description: normalizeError(error) });
+    } finally {
+      setLoading(false);
+    }
+  }, [api, notify, search, status, days]);
+
+  useEffect(() => { load(); }, []);
+
+  const submitSearch = (event) => {
+    event?.preventDefault();
+    load();
+  };
+
+  const summary = report.summary || {};
+  const pct = (value) => `${(Number(value || 0) * 100).toFixed(1)}%`;
+  const rate = (num, den) => Number(den || 0) ? `${((Number(num || 0) / Number(den || 0)) * 100).toFixed(1)}%` : '0.0%';
+  const formatDate = (value) => value ? new Date(value).toLocaleString('it-IT') : '-';
+  const targetLabel = (target) => ({
+    profile: 'Scheda pubblica',
+    claim: 'Claim / area veterinari',
+    benefits: 'Vantaggi veterinari',
+    non_specificato: 'Click non specificato',
+  }[target] || target || '-');
+  const queueLabel = (queue) => ({
+    direct_contact: 'Contatto diretto',
+    quote_reminder: 'Reminder preventivo',
+    non_classificata: 'Non classificata',
+  }[queue] || queue || '-');
+
+  const cards = [
+    ['Invii creati', summary.total, `${summary.pending || 0} pending`, Mail],
+    ['Email inviate', summary.sent, `${summary.failed || 0} fallite`, CheckCircle2],
+    ['CTR click', pct(summary.ctr), `${summary.clicked || 0} click`, BarChart3],
+    ['Registrazioni', summary.registered, rate(summary.registered, summary.sent), Users],
+    ['Claim attribuiti', summary.claimed, rate(summary.claimed, summary.sent), Stethoscope],
+  ];
+
+  return (
+    <section className="space-y-4">
+      <Toolbar title="Report invii email" description="Performance delle email ai veterinari: invio, click, registrazione e claim attribuiti." loading={loading} onRefresh={load}>
+        <form className="flex flex-wrap items-center gap-2" onSubmit={submitSearch}>
+          <Select value={days} onChange={setDays} className="w-36">
+            <option value="7">Ultimi 7 giorni</option>
+            <option value="30">Ultimi 30 giorni</option>
+            <option value="90">Ultimi 90 giorni</option>
+            <option value="365">Ultimo anno</option>
+          </Select>
+          <Select value={status} onChange={setStatus} className="w-40">
+            <option value="all">Tutti gli stati</option>
+            <option value="sent">Inviate</option>
+            <option value="pending">Pending</option>
+            <option value="failed">Fallite</option>
+          </Select>
+          <Input className="w-72" placeholder="Cerca clinica, città, email..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Button type="submit" disabled={loading}><Search className="h-4 w-4" /> Cerca</Button>
+        </form>
+      </Toolbar>
+
+      <Card className="border-blue-200 bg-blue-50 p-4 text-sm text-blue-950">
+        Le aperture email non sono tracciate in modo affidabile. Qui misuriamo CTR sui link, registrazioni e claim generati dai token delle email.
+      </Card>
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+        {cards.map(([title, value, detail, Icon]) => (
+          <Card key={title} className="p-4">
+            <div className="flex items-start justify-between">
+              <Icon className="h-5 w-5 text-slate-700" />
+              <span className="text-xs font-semibold text-slate-500">{detail}</span>
+            </div>
+            <p className="mt-3 text-2xl font-bold">{typeof value === 'number' ? Number(value || 0).toLocaleString('it-IT') : value || '0'}</p>
+            <p className="text-sm font-semibold text-slate-600">{title}</p>
+          </Card>
+        ))}
+      </div>
+
+      <div className="grid gap-4 xl:grid-cols-2">
+        <Card>
+          <CardHeader title="Performance per tipo invio" description="Direct contact prima, reminder preventivo separati." />
+          <DataTable headers={['Tipo', 'Creati', 'Inviati', 'Click', 'CTR', 'Registrazioni', 'Claim']}>
+            {report.queues.map((row) => (
+              <tr key={row.queue_type} className="border-t">
+                <td className="px-4 py-3 font-semibold">{queueLabel(row.queue_type)}</td>
+                <td className="px-4 py-3">{Number(row.total || 0).toLocaleString('it-IT')}</td>
+                <td className="px-4 py-3">{Number(row.sent || 0).toLocaleString('it-IT')}</td>
+                <td className="px-4 py-3">{Number(row.clicked || 0).toLocaleString('it-IT')}</td>
+                <td className="px-4 py-3">{rate(row.clicked, row.sent)}</td>
+                <td className="px-4 py-3">{Number(row.registered || 0).toLocaleString('it-IT')}</td>
+                <td className="px-4 py-3">{Number(row.claimed || 0).toLocaleString('it-IT')}</td>
+              </tr>
+            ))}
+            {!report.queues.length && <EmptyRow cols={7} text="Nessun dato nel periodo." />}
+          </DataTable>
+        </Card>
+
+        <Card>
+          <CardHeader title="Click per destinazione" description="Quale call to action viene usata dopo l'apertura." />
+          <DataTable headers={['Destinazione', 'Click']}>
+            {report.targets.map((row) => (
+              <tr key={row.target} className="border-t">
+                <td className="px-4 py-3 font-semibold">{targetLabel(row.target)}</td>
+                <td className="px-4 py-3">{Number(row.clicks || 0).toLocaleString('it-IT')}</td>
+              </tr>
+            ))}
+            {!report.targets.length && <EmptyRow cols={2} text="Nessun click registrato." />}
+          </DataTable>
+        </Card>
+      </div>
+
+      <Card>
+        <CardHeader title="Andamento giornaliero" description={`Ultimi ${days} giorni, ordinati dal più recente.`} />
+        <DataTable headers={['Giorno', 'Creati', 'Inviati', 'Fallite', 'Click', 'CTR', 'Registrazioni', 'Claim']}>
+          {report.daily.map((row) => (
+            <tr key={row.day} className="border-t">
+              <td className="px-4 py-3 font-semibold">{row.day ? new Date(row.day).toLocaleDateString('it-IT') : '-'}</td>
+              <td className="px-4 py-3">{Number(row.total || 0).toLocaleString('it-IT')}</td>
+              <td className="px-4 py-3">{Number(row.sent || 0).toLocaleString('it-IT')}</td>
+              <td className="px-4 py-3">{Number(row.failed || 0).toLocaleString('it-IT')}</td>
+              <td className="px-4 py-3">{Number(row.clicked || 0).toLocaleString('it-IT')}</td>
+              <td className="px-4 py-3">{rate(row.clicked, row.sent)}</td>
+              <td className="px-4 py-3">{Number(row.registered || 0).toLocaleString('it-IT')}</td>
+              <td className="px-4 py-3">{Number(row.claimed || 0).toLocaleString('it-IT')}</td>
+            </tr>
+          ))}
+          {!report.daily.length && <EmptyRow cols={8} text="Nessun invio nel periodo." />}
+        </DataTable>
+      </Card>
+
+      <DataTable headers={['Clinica', 'Email', 'Tipo', 'Stato', 'Click', 'Conversione', 'Data', 'Dettagli']}>
+        {report.rows.map((row) => {
+          const isOpen = expanded === row.id;
+          return (
+            <React.Fragment key={row.id}>
+              <tr className="border-t align-top">
+                <td className="px-4 py-3">
+                  <p className="font-semibold text-slate-950">{row.clinic_name}</p>
+                  <p className="text-xs text-slate-500">{row.clinic_city || '-'}{row.clinic_province ? ` (${row.clinic_province})` : ''}</p>
+                  {row.clinic_slug && (
+                    <a className="mt-1 inline-flex items-center gap-1 text-xs text-blue-700 hover:underline" href={`/veterinari/${row.clinic_slug}`} target="_blank" rel="noreferrer">
+                      Scheda <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
+                </td>
+                <td className="px-4 py-3">
+                  <p className="font-medium">{row.recipient_email}</p>
+                  <p className="mt-1 max-w-xs truncate text-xs text-slate-500">{row.subject}</p>
+                </td>
+                <td className="px-4 py-3"><Badge>{queueLabel(row.lead_summary?.queue_type)}</Badge></td>
+                <td className="px-4 py-3">
+                  <Badge>{row.status}</Badge>
+                  {row.error && <p className="mt-1 max-w-xs text-xs text-red-700">{row.error}</p>}
+                </td>
+                <td className="px-4 py-3">
+                  <p className={row.clicked_at ? 'font-semibold text-emerald-700' : 'text-slate-500'}>{row.clicked_at ? 'Sì' : 'No'}</p>
+                  {row.last_click_target && <p className="text-xs text-slate-500">{targetLabel(row.last_click_target)}</p>}
+                </td>
+                <td className="px-4 py-3 text-xs">
+                  <p className={row.registered_at ? 'font-semibold text-emerald-700' : 'text-slate-500'}>Registrazione: {row.registered_at ? 'sì' : 'no'}</p>
+                  <p className={row.claimed_at ? 'font-semibold text-emerald-700' : 'text-slate-500'}>Claim: {row.claimed_at ? 'sì' : 'no'}</p>
+                </td>
+                <td className="px-4 py-3 text-xs text-slate-500">
+                  <p>Creato {formatDate(row.created_at)}</p>
+                  {row.sent_at && <p>Inviato {formatDate(row.sent_at)}</p>}
+                  {row.clicked_at && <p>Click {formatDate(row.clicked_at)}</p>}
+                </td>
+                <td className="px-4 py-3">
+                  <Button size="sm" variant="outline" onClick={() => setExpanded(isOpen ? null : row.id)}>
+                    {isOpen ? 'Chiudi' : 'Apri'}
+                  </Button>
+                </td>
+              </tr>
+              {isOpen && (
+                <tr className="border-t bg-slate-50">
+                  <td className="px-4 py-4" colSpan={8}>
+                    <div className="grid gap-4 lg:grid-cols-2">
+                      <div>
+                        <p className="mb-2 text-xs font-semibold uppercase text-slate-500">Segnali che hanno generato l'email</p>
+                        <div className="grid gap-2 sm:grid-cols-2">
+                          {[
+                            ['Click telefono', row.lead_summary?.phone_clicks],
+                            ['Click percorso', row.lead_summary?.direction_clicks],
+                            ['Click email', row.lead_summary?.email_clicks],
+                            ['Richieste preventivo', row.lead_summary?.quote_requests],
+                            ['Richieste contatto', row.lead_summary?.contact_requests],
+                            ['Score', row.lead_summary?.engagement_score],
+                          ].map(([label, value]) => (
+                            <div key={label} className="rounded-md border bg-white p-3">
+                              <p className="text-lg font-bold">{Number(value || 0).toLocaleString('it-IT')}</p>
+                              <p className="text-xs font-semibold text-slate-500">{label}</p>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div>
+                        <p className="mb-2 text-xs font-semibold uppercase text-slate-500">Metadati</p>
+                        <pre className="max-h-72 overflow-auto rounded bg-slate-950 p-3 text-xs text-slate-100">{JSON.stringify(row.lead_summary || {}, null, 2)}</pre>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+            </React.Fragment>
+          );
+        })}
+        {!report.rows.length && <EmptyRow cols={8} text="Nessun invio email trovato." />}
       </DataTable>
     </section>
   );

@@ -360,6 +360,148 @@ async function quoteRequestsListAction(payload: Record<string, any>) {
   return rows || [];
 }
 
+async function marketingReportAction(payload: Record<string, any>) {
+  const days = Math.min(365, Math.max(1, Number(payload.days || 30)));
+  const status = String(payload.status || 'all').trim();
+  const search = String(payload.search || '').trim();
+  const limit = Math.min(300, Math.max(1, Number(payload.limit || 100)));
+  const params: any[] = [days];
+  const where: string[] = [`o.created_at >= now() - ($1::int * interval '1 day')`];
+
+  if (status && status !== 'all') {
+    params.push(status);
+    where.push(`o.status = $${params.length}`);
+  }
+
+  if (search) {
+    params.push(`%${search}%`);
+    where.push(`(
+      c.name ilike $${params.length}
+      or c.slug ilike $${params.length}
+      or c.city ilike $${params.length}
+      or c.province ilike $${params.length}
+      or o.recipient_email ilike $${params.length}
+      or o.subject ilike $${params.length}
+      or o.campaign_key ilike $${params.length}
+    )`);
+  }
+
+  const whereSql = where.join(' and ');
+
+  const [summaryResult, dailyResult, queueResult, targetResult, rowsResult] = await Promise.all([
+    query<any>(
+      `select
+         count(*)::int as total,
+         count(*) filter (where o.status = 'pending')::int as pending,
+         count(*) filter (where o.status = 'sent')::int as sent,
+         count(*) filter (where o.status = 'failed')::int as failed,
+         count(*) filter (where o.clicked_at is not null)::int as clicked,
+         count(*) filter (where o.registered_at is not null or o.registered_user_id is not null)::int as registered,
+         count(*) filter (where o.claimed_at is not null)::int as claimed,
+         count(*) filter (where o.lead_summary->>'queue_type' = 'direct_contact')::int as direct_contact,
+         count(*) filter (where o.lead_summary->>'queue_type' = 'quote_reminder')::int as quote_reminder,
+         max(o.sent_at) as last_sent_at,
+         max(o.clicked_at) as last_clicked_at
+       from public.clinic_marketing_outreach o
+       join public.clinics c on c.id = o.clinic_id
+       where ${whereSql}`,
+      params
+    ),
+    query<any>(
+      `select
+         date_trunc('day', coalesce(o.sent_at, o.created_at))::date as day,
+         count(*)::int as total,
+         count(*) filter (where o.status = 'sent')::int as sent,
+         count(*) filter (where o.status = 'failed')::int as failed,
+         count(*) filter (where o.clicked_at is not null)::int as clicked,
+         count(*) filter (where o.registered_at is not null or o.registered_user_id is not null)::int as registered,
+         count(*) filter (where o.claimed_at is not null)::int as claimed
+       from public.clinic_marketing_outreach o
+       join public.clinics c on c.id = o.clinic_id
+       where ${whereSql}
+       group by 1
+       order by 1 desc
+       limit 45`,
+      params
+    ),
+    query<any>(
+      `select
+         coalesce(nullif(o.lead_summary->>'queue_type', ''), 'non_classificata') as queue_type,
+         count(*)::int as total,
+         count(*) filter (where o.status = 'sent')::int as sent,
+         count(*) filter (where o.clicked_at is not null)::int as clicked,
+         count(*) filter (where o.registered_at is not null or o.registered_user_id is not null)::int as registered,
+         count(*) filter (where o.claimed_at is not null)::int as claimed
+       from public.clinic_marketing_outreach o
+       join public.clinics c on c.id = o.clinic_id
+       where ${whereSql}
+       group by 1
+       order by total desc`,
+      params
+    ),
+    query<any>(
+      `select
+         coalesce(nullif(o.last_click_target, ''), 'non_specificato') as target,
+         count(*)::int as clicks
+       from public.clinic_marketing_outreach o
+       join public.clinics c on c.id = o.clinic_id
+       where ${whereSql}
+         and o.clicked_at is not null
+       group by 1
+       order by clicks desc`,
+      params
+    ),
+    query<any>(
+      `select
+         o.id::text,
+         o.clinic_id::text,
+         c.name as clinic_name,
+         c.slug as clinic_slug,
+         c.city as clinic_city,
+         c.province as clinic_province,
+         o.campaign_key,
+         o.recipient_email,
+         o.subject,
+         o.status,
+         o.lead_summary,
+         o.sent_at,
+         o.clicked_at,
+         o.last_click_target,
+         o.registered_at,
+         o.claimed_at,
+         o.error,
+         o.created_at,
+         o.updated_at
+       from public.clinic_marketing_outreach o
+       join public.clinics c on c.id = o.clinic_id
+       where ${whereSql}
+       order by o.created_at desc
+       limit $${params.length + 1}`,
+      [...params, limit]
+    ),
+  ]);
+
+  const summary = summaryResult.rows[0] || {};
+  const sent = Number(summary.sent || 0);
+  const clicked = Number(summary.clicked || 0);
+  const registered = Number(summary.registered || 0);
+  const claimed = Number(summary.claimed || 0);
+
+  return {
+    summary: {
+      ...summary,
+      ctr: sent ? clicked / sent : 0,
+      registrationRate: sent ? registered / sent : 0,
+      claimRate: sent ? claimed / sent : 0,
+      openTrackingAvailable: false,
+    },
+    daily: dailyResult.rows || [],
+    queues: queueResult.rows || [],
+    targets: targetResult.rows || [],
+    rows: rowsResult.rows || [],
+  };
+}
+
 async function loadClaimDetails(claimId: string) {
   const { rows } = await query<any>(
     `select
@@ -614,6 +756,10 @@ export const POST: APIRoute = async (context) => {
 
     if (action === 'quotes.list') {
       return json({ success: true, rows: await quoteRequestsListAction(body) });
+    }
+
+    if (action === 'marketing.report') {
+      return json({ success: true, ...(await marketingReportAction(body)) });
     }
 
     if (action === 'users.list') {
