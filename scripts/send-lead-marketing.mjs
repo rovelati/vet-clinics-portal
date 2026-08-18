@@ -20,7 +20,7 @@ loadEnv(path.resolve(process.cwd(), '.env'));
 const DATABASE_URL = process.env.DATABASE_URL || process.env.LOCAL_DATABASE_URL;
 const SITE_URL = process.env.SITE_URL || 'https://www.veterinari.org';
 const FROM = process.env.MAIL_FROM || 'info@veterinari.org';
-const LIMIT = Number(process.argv.find((arg) => arg.startsWith('--limit='))?.split('=')[1] || 10);
+const LIMIT = Number(process.argv.find((arg) => arg.startsWith('--limit='))?.split('=')[1] || 20);
 const REMINDER_LIMIT = Math.min(15, Number(process.argv.find((arg) => arg.startsWith('--reminder-limit='))?.split('=')[1] || 15));
 const PREVIEW = process.argv.includes('--preview');
 const DRY_RUN = process.argv.includes('--dry-run') || PREVIEW;
