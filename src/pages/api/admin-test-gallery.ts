@@ -58,14 +58,13 @@ function resolveMediaDir(): string {
 }
 
 async function requireAdmin(context: Parameters<APIRoute>[0]) {
-  if (!admin) return { ok: false as const, response: json({ success: false, error: 'SUPABASE_SERVICE_ROLE_KEY non configurata sul server.' }, 503) };
+  if (!admin) return { ok: false as const, response: json({ success: false, error: 'Client admin database non configurato sul server.' }, 503) };
   if (allowUnauth) return { ok: true as const };
 
   const { user } = await requireLocalUser(context);
   if (!user?.id) return { ok: false as const, response: json({ success: false, error: 'Sessione non valida o scaduta.' }, 401) };
 
-  const { data: profile } = await admin.from('profiles').select('role').eq('id', user.id).maybeSingle();
-  if (profile?.role !== 'admin' || user.role !== 'admin') return { ok: false as const, response: json({ success: false, error: 'Permessi admin insufficienti.' }, 403) };
+  if (user.role !== 'admin') return { ok: false as const, response: json({ success: false, error: 'Permessi admin insufficienti.' }, 403) };
   return { ok: true as const };
 }
 

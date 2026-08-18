@@ -38,10 +38,6 @@ function localPostgrestFetch(input: RequestInfo | URL, init?: RequestInit) {
 }
 
 async function requireAdmin(context: Parameters<APIRoute>[0]) {
-  if (!admin) {
-    return { ok: false as const, response: json({ success: false, error: 'SUPABASE_SERVICE_ROLE_KEY non configurata sul server.' }, 503) };
-  }
-
   if (allowUnauth) return { ok: true as const, userId: null };
 
   const { user } = await requireLocalUser(context);
@@ -49,17 +45,20 @@ async function requireAdmin(context: Parameters<APIRoute>[0]) {
     return { ok: false as const, response: json({ success: false, error: 'Sessione non valida o scaduta.' }, 401) };
   }
 
-  const { data: profile, error: profileError } = await admin
-    .from('profiles')
-    .select('id, role, full_name')
-    .eq('id', user.id)
-    .maybeSingle();
-
-  if (profileError || profile?.role !== 'admin' || user.role !== 'admin') {
+  if (user.role !== 'admin') {
     return { ok: false as const, response: json({ success: false, error: 'Permessi admin insufficienti.' }, 403) };
   }
 
-  return { ok: true as const, userId: user.id, profile };
+  return {
+    ok: true as const,
+    userId: user.id,
+    profile: {
+      id: user.id,
+      role: user.role,
+      full_name: user.full_name,
+      email: user.email,
+    },
+  };
 }
 
 function pickClinicUpdate(clinic: Record<string, any>) {
@@ -113,12 +112,9 @@ async function uniqueBlogSlug(title: string, articleId: string) {
   return `${base}-${Date.now()}`;
 }
 
-async function count(table: string, build?: (query: any) => any) {
-  let query = admin!.from(table).select('*', { count: 'exact', head: true });
-  if (build) query = build(query);
-  const { count, error } = await query;
-  if (error) throw error;
-  return count || 0;
+async function countWhere(table: string, where = 'true') {
+  const { rows } = await query<{ count: number }>(`select count(*)::int as count from ${table} where ${where}`);
+  return Number(rows[0]?.count || 0);
 }
 
 async function statsAction() {
@@ -143,29 +139,31 @@ async function statsAction() {
     quoteRequests,
     quoteRequestsSent,
   ] = await Promise.all([
-    count('clinics'),
-    count('clinics', (q) => q.not('gmb_status', 'is', null).neq('gmb_status', 'pending')),
-    count('clinics', (q) => q.eq('deepupdate_status', 'completed')),
-    count('clinics', (q) => q.not('website', 'is', null)),
-    count('clinics', (q) => q.not('email', 'is', null).neq('email', '')),
-    count('clinics', (q) => q.not('website_spidered_at', 'is', null)),
-    count('clinics', (q) => q.not('lat', 'is', null).not('lng', 'is', null)),
-    count('clinics', (q) => q.not('rating_avg_cached', 'is', null)),
-    count('profiles'),
-    count('profiles', (q) => q.eq('role', 'proprietario')),
-    count('profiles', (q) => q.eq('role', 'veterinario')),
-    count('profiles', (q) => q.eq('role', 'admin')),
-    count('local_auth_users'),
-    count('local_auth_users', (q) => q.eq('role', 'proprietario')),
-    count('local_auth_users', (q) => q.eq('role', 'veterinario')),
-    count('clinics', (q) => q.not('owner_id', 'is', null)),
-    count('claims', (q) => q.eq('status', 'approved')),
-    count('quote_requests'),
-    count('quote_requests', (q) => q.eq('status', 'sent')),
+    countWhere('public.clinics'),
+    countWhere('public.clinics', `gmb_status is not null and gmb_status <> 'pending'`),
+    countWhere('public.clinics', `deepupdate_status = 'completed'`),
+    countWhere('public.clinics', `website is not null`),
+    countWhere('public.clinics', `email is not null and email <> ''`),
+    countWhere('public.clinics', `website_spidered_at is not null`),
+    countWhere('public.clinics', `lat is not null and lng is not null`),
+    countWhere('public.clinics', `rating_avg_cached is not null`),
+    countWhere('public.profiles'),
+    countWhere('public.profiles', `role = 'proprietario'`),
+    countWhere('public.profiles', `role = 'veterinario'`),
+    countWhere('public.profiles', `role = 'admin'`),
+    countWhere('public.local_auth_users'),
+    countWhere('public.local_auth_users', `role = 'proprietario'`),
+    countWhere('public.local_auth_users', `role = 'veterinario'`),
+    countWhere('public.clinics', `owner_id is not null`),
+    countWhere('public.claims', `status = 'approved'`),
+    countWhere('public.quote_requests'),
+    countWhere('public.quote_requests', `status = 'sent'`),
   ]);
 
-  const { data: reviewRows } = await admin!.from('google_reviews').select('clinic_id').limit(100000);
-  const withReviews = new Set((reviewRows || []).map((row) => row.clinic_id).filter(Boolean)).size;
+  const { rows: reviewRows } = await query<{ count: number }>(
+    `select count(distinct clinic_id)::int as count from public.google_reviews where clinic_id is not null`
+  );
+  const withReviews = Number(reviewRows[0]?.count || 0);
 
   const { rows: serviceRows } = await query<{ count: number }>(
     `select count(*)::int as count
@@ -239,8 +237,12 @@ async function statsAction() {
     semantic_suggestions: 0,
   };
 
-  const { data: hoursRows } = await admin!.from('clinics').select('hours').limit(20000);
-  const withHours = (hoursRows || []).filter((row) => row.hours && typeof row.hours === 'object' && Object.keys(row.hours).length > 0).length;
+  const { rows: hoursRows } = await query<{ count: number }>(
+    `select count(*)::int as count
+     from public.clinics
+     where hours is not null and hours::text not in ('{}', 'null', '')`
+  );
+  const withHours = Number(hoursRows[0]?.count || 0);
 
   return {
     total,
@@ -744,10 +746,7 @@ export const POST: APIRoute = async (context) => {
     if (action === 'bootstrap') {
       const [stats, taxonomy] = await Promise.all([
         statsAction(),
-        admin!.from('services_taxonomy').select('*').order('category').order('name').then(({ data, error }) => {
-          if (error) throw error;
-          return data || [];
-        }),
+        query(`select * from public.services_taxonomy order by category, name`).then(({ rows }) => rows || []),
       ]);
       return json({ success: true, stats, taxonomy, profile: gate.profile || null, allowUnauth });
     }
