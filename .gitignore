@@ -19,6 +19,10 @@ outputs/
 .env
 .env.production
 .env*.local
+*.env
+*.pem
+*.key
+*.token
 
 # macOS-specific files
 .DS_Store
